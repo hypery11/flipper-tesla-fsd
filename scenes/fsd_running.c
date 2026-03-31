@@ -52,8 +52,8 @@ static int32_t fsd_running_worker(void* context) {
     CANFRAME frame;
 
     mcp->mode = MCP_NORMAL;
-    mcp->bitrate = MCP_16MHz_500kBPS;
-    mcp->clk = MCP_16MHZ;
+    mcp->bitRate = MCP_500KBPS;
+    mcp->clck = MCP_16MHZ;
 
     if(mcp2515_init(mcp) != ERROR_OK) {
         view_dispatcher_send_custom_event(app->view_dispatcher, TeslaFSDEventNoDevice);
