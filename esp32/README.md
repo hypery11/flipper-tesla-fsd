@@ -4,7 +4,15 @@
 
 Unlock Tesla FSD with an ESP32 + CAN transceiver via OBD-II. No Flipper Zero needed — ~¥100 total cost.
 
-> **⚠️ Status: NOT YET TESTED ON A REAL VEHICLE.** Firmware compiles, flashes, and boots correctly on bench. Waiting for OBD-II cable to arrive for in-car testing. Use at your own risk.
+> [!CAUTION]
+> **🚧 ESP32 Port — UNTESTED ON VEHICLE as of 2026-04-09**
+>
+> This firmware compiles, flashes, and boots correctly on bench. It has **not yet been tested on a real Tesla**. CAN logic is faithfully ported from hypery11/flipper-tesla-fsd but real-car validation is pending.
+>
+> **If you test this on your vehicle, please report your results in this PR thread.**
+
+> [!IMPORTANT]
+> The device boots in **Listen-Only mode** by default and will **not transmit any CAN frames** until the user explicitly switches to Active mode via the physical button or Web Dashboard UI. This ensures safe first-boot behavior.
 
 ---
 
