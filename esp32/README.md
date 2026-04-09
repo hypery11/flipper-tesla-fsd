@@ -11,6 +11,16 @@ Unlock Tesla FSD with an ESP32 + CAN transceiver via OBD-II. No Flipper Zero nee
 >
 > **If you test this on your vehicle, please report your results in this PR thread.**
 
+> [!WARNING]
+> **Serious community concerns raised about the upstream CAN-injection approach (2026-04-09)**
+>
+> Please read the following before building, flashing, or plugging anything into your vehicle:
+>
+> - **[Issue #12](https://github.com/hypery11/flipper-tesla-fsd/issues/12)** — Real HW3 + firmware 2026.2.11 test: `0x3FD` modified and retransmitted on X179 20-pin CAN bus exactly as this code does, **FSD did not activate**. Raw CAN logs included.
+> - **[Issue #14](https://github.com/hypery11/flipper-tesla-fsd/issues/14)** — Cites [commaai/opendbc](https://github.com/commaai/opendbc/blob/master/opendbc/dbc/tesla_can.dbc) and [ACM paper 10.1145/3708821.3710820](https://dl.acm.org/doi/10.1145/3708821.3710820) arguing that on 2020+ Model 3/Y the Gateway ↔ FSD-computer link is over **encrypted Ethernet**, not CAN, so CAN MITM cannot change FSD entitlement. The `0x398` (GTW_carConfig) frame this code auto-detects on is reported to not appear on OBD-II on post-2020 vehicles.
+>
+> **I do not have independent real-car validation that this works.** This port was merged into the upstream repo, but merge status is **not** validation. Do not spend money on hardware expecting this to grant free FSD — an active FSD entitlement is required by the upstream project regardless. If you are a researcher with a test vehicle, please post findings in #12 or #14.
+
 > [!IMPORTANT]
 > The device boots in **Listen-Only mode** by default and will **not transmit any CAN frames** until the user explicitly switches to Active mode via the physical button or Web Dashboard UI. This ensures safe first-boot behavior.
 
