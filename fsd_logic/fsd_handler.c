@@ -344,6 +344,49 @@ void fsd_build_steering_tune_frame(CANFRAME* frame, uint8_t mode) {
     frame->buffer[0] = (mode & 0x07) << 2;
 }
 
+// --- DAS_status (0x39B) parser: AP state, blind spot, FCW, speed limit ---
+// opendbc tesla_model3_party.dbc — all little-endian
+
+void fsd_handle_das_status(FSDState* state, const CANFRAME* frame) {
+    if(frame->data_lenght < 7) return;
+    // DAS_autopilotHandsOnState: bit42|4 → byte5 bits[5:2]
+    state->das_hands_on_state = (frame->buffer[5] >> 2) & 0x0F;
+    // DAS_autoLaneChangeState: bit46|5 → byte5 bits[7:6] + byte6 bits[2:0]
+    state->das_lane_change = ((frame->buffer[5] >> 6) & 0x03) |
+                             ((frame->buffer[6] & 0x07) << 2);
+    // DAS_laneDepartureWarning: bit37|3 → byte4 bits[7:5]
+    // (not stored separately, included in lane_change context)
+    // DAS_sideCollisionWarning: bit32|2 → byte4 bits[1:0]
+    state->das_side_coll_warn = frame->buffer[4] & 0x03;
+    // DAS_sideCollisionAvoid: bit30|2 → byte3 bits[7:6]
+    state->das_side_coll_avoid = (frame->buffer[3] >> 6) & 0x03;
+    // DAS_forwardCollisionWarning: bit22|2 → byte2 bits[7:6]
+    state->das_fcw = (frame->buffer[2] >> 6) & 0x03;
+    // DAS_visionOnlySpeedLimit: bit16|5 → byte2 bits[4:0], ×5 = kph
+    state->das_vision_speed_lim = frame->buffer[2] & 0x1F;
+    state->das_seen = true;
+}
+
+// --- DAS_status2 (0x389) parser: ACC report, activation failure ---
+
+void fsd_handle_das_status2(FSDState* state, const CANFRAME* frame) {
+    if(frame->data_lenght < 5) return;
+    // DAS_ACC_report: bit26|5 → byte3 bits[5:1]? Actually bit26 LE:
+    // byte3 = bits 24-31, so bit26 = byte3 bit2, 5 bits → byte3 bits[6:2]
+    state->das_acc_report = (frame->buffer[3] >> 2) & 0x1F;
+    // DAS_activationFailureStatus: bit14|2 → byte1 bits[7:6]
+    state->das_activation_fail = (frame->buffer[1] >> 6) & 0x03;
+}
+
+// --- DAS_settings (0x293) readback: autosteer enabled state ---
+
+void fsd_handle_das_settings(FSDState* state, const CANFRAME* frame) {
+    if(frame->data_lenght < 5) return;
+    // DAS_autosteerEnabled: bit38|1@0+ (big-endian)
+    // Motorola bit 38 → byte4 bit6
+    state->das_autosteer_on = (frame->buffer[4] >> 6) & 0x01;
+}
+
 // --- Nag killer (CAN 880 counter+1 echo) ---
 
 bool fsd_handle_nag_killer(FSDState* state, const CANFRAME* frame, CANFRAME* out) {

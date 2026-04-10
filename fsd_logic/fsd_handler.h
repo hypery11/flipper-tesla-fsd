@@ -25,6 +25,9 @@
 #define CAN_ID_DI_SPEED       0x257  // 599  - DI_speed (vehicle speed, checksummed)
 #define CAN_ID_ESP_STATUS     0x145  // 325  - ESP_status (brake, stability)
 #define CAN_ID_GTW_EPAS_CTRL  0x101  // 257  - GTW_epasControl (steering tune WRITE, Chassis CAN)
+#define CAN_ID_DAS_STATUS     0x39B  // 923  - DAS_status (AP state, nag, lane change, blind spot)
+#define CAN_ID_DAS_STATUS2    0x389  // 905  - DAS_status2 (ACC report, driver interaction)
+#define CAN_ID_DAS_SETTINGS   0x293  // 659  - DAS_settings (autosteer enable, steering weight, etc.)
 
 typedef enum {
     TeslaHW_Unknown = 0,
@@ -80,6 +83,18 @@ typedef struct {
     float torsion_bar_torque_nm; // from 0x370 EPAS3S_torsionBarTorque
     bool driver_brake_applied;   // from 0x145 ESP_driverBrakeApply
     bool speed_seen;             // true once we've parsed at least one 0x257
+
+    // --- DAS state (from 0x39B / 0x389 — Party CAN, read-only) ---
+    uint8_t das_hands_on_state;  // 0-15 (4-bit nag level from DAS, more precise than EPAS 2-bit)
+    uint8_t das_lane_change;     // 0-31 (5-bit auto lane change state)
+    uint8_t das_side_coll_warn;  // 0-3  (side collision / blind spot warning)
+    uint8_t das_side_coll_avoid; // 0-3  (side collision avoidance active)
+    uint8_t das_fcw;             // 0-3  (forward collision warning)
+    uint8_t das_vision_speed_lim;// raw×5 = kph/mph
+    uint8_t das_acc_report;      // 0-24 (ACC state: 0=off, higher=active modes)
+    uint8_t das_activation_fail; // 0-2  (why AP failed to activate)
+    bool das_autosteer_on;       // from 0x293 DAS_autosteerEnabled readback
+    bool das_seen;               // true once we've parsed at least one 0x39B
 
     // --- extras: write toggles (BETA, Service mode only) ---
     bool extra_hazard_lights;
@@ -171,3 +186,16 @@ void fsd_handle_esp_status(FSDState* state, const CANFRAME* frame);
  *  Source: tuncasoftbildik TESLA_CAN_STEERING_REFERENCE.md.
  *  NOTE: This is on CHASSIS CAN, not Party CAN — requires different tap. */
 void fsd_build_steering_tune_frame(CANFRAME* frame, uint8_t mode);
+
+/** Parse DAS_status (0x39B) — AP hands-on state, lane change, blind spot,
+ *  FCW, vision speed limit. All Party CAN, read-only.
+ *  Source: opendbc tesla_model3_party.dbc. */
+void fsd_handle_das_status(FSDState* state, const CANFRAME* frame);
+
+/** Parse DAS_status2 (0x389) — ACC report, activation failure.
+ *  Source: opendbc tesla_model3_party.dbc. */
+void fsd_handle_das_status2(FSDState* state, const CANFRAME* frame);
+
+/** Parse DAS_settings (0x293) — readback of autosteer enabled state.
+ *  Source: opendbc tesla_model3_party.dbc. */
+void fsd_handle_das_settings(FSDState* state, const CANFRAME* frame);

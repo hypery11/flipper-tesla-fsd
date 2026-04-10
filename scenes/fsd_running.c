@@ -213,6 +213,15 @@ static int32_t fsd_running_worker(void* context) {
                 else if(frame.canId == CAN_ID_ESP_STATUS) {
                     fsd_handle_esp_status(&state, &frame);
                 }
+                else if(frame.canId == CAN_ID_DAS_STATUS) {
+                    fsd_handle_das_status(&state, &frame);
+                }
+                else if(frame.canId == CAN_ID_DAS_STATUS2) {
+                    fsd_handle_das_status2(&state, &frame);
+                }
+                else if(frame.canId == CAN_ID_DAS_SETTINGS) {
+                    fsd_handle_das_settings(&state, &frame);
+                }
 
                 // Extras: write handlers (Service mode only, gated inside each handler)
                 if(frame.canId == CAN_ID_VCFRONT_LIGHT) {
