@@ -54,25 +54,20 @@ struct FSDState {
     uint32_t       seen_gtw_car_state;      // 0x318 seen count
     uint32_t       seen_gtw_car_config;     // 0x398 seen count
     uint32_t       seen_ap_control;         // 0x3FD seen count
-    uint32_t       seen_bms_hv;             // 0x132 seen count
-    uint32_t       seen_bms_soc;            // 0x292 seen count
-    uint32_t       seen_bms_thermal;        // 0x312 seen count
-
-    // ── BMS read-only sniff ───────────────────────────────────────────────────
-    bool           bms_output;       // print BMS data to serial
-    bool           bms_seen;
-    float          pack_voltage_v;
-    float          pack_current_a;
-    float          soc_percent;
-    int8_t         batt_temp_min_c;
-    int8_t         batt_temp_max_c;
-
-    // ── Precondition trigger ──────────────────────────────────────────────────
-    bool           precondition;     // periodically inject 0x082
 
     // ── TLSSC Restore (0x331 DAS config spoof) ──────────────────────────────
     bool           tlssc_restore;
     uint32_t       tlssc_restore_count;
+
+    // ── Car sleep / wake detection ────────────────────────────────────────────
+    bool           car_asleep;              // true when no CAN traffic detected
+    bool           auto_activate_on_wake;   // switch to Active mode on car wake
+    uint32_t       last_rx_ms;              // timestamp of last received CAN frame
+    uint32_t       first_rx_ms;             // timestamp of first frame after boot/wake
+
+    // ── HW detection hardening ────────────────────────────────────────────────
+    bool           hw_from_authoritative;   // true if HW was detected via 0x398
+    uint8_t        hw_fallback_count_399;   // confirmation counter for ISA speed fallback
 };
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -111,18 +106,6 @@ bool fsd_handle_isa_speed_chime(CanFrame *frame);
 /** Build an echo of EPAS3P_sysStatus (0x370) with counter+1 and handsOnLevel=1.
  *  Writes result into *out.  Returns true if echo should be sent. */
 bool fsd_handle_nag_killer(FSDState *state, const CanFrame *frame, CanFrame *out);
-
-/** Parse BMS_hvBusStatus (0x132) — updates pack_voltage_v / pack_current_a. */
-void fsd_handle_bms_hv(FSDState *state, const CanFrame *frame);
-
-/** Parse BMS_socStatus (0x292) — updates soc_percent. */
-void fsd_handle_bms_soc(FSDState *state, const CanFrame *frame);
-
-/** Parse BMS_thermalStatus (0x312) — updates batt_temp_min/max_c. */
-void fsd_handle_bms_thermal(FSDState *state, const CanFrame *frame);
-
-/** Build a UI_tripPlanning (0x082) frame to trigger active battery heating. */
-void fsd_build_precondition_frame(CanFrame *frame);
 
 /** Handle CAN ID 0x331 — TLSSC Restore via DAS config spoof.
  *  Overwrites byte[0] lower 6 bits to 0x1B (SELF_DRIVING).

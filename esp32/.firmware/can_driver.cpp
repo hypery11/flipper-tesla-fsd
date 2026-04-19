@@ -88,6 +88,12 @@ public:
         stop_and_uninstall();
         install_and_start(enable);
     }
+
+    void reset() override {
+        bool lo = listen_only_;
+        stop_and_uninstall();
+        install_and_start(lo);
+    }
 };
 
 CanDriver *can_driver_create() {
@@ -153,6 +159,15 @@ public:
         if (listen_only_ == enable) return;
         listen_only_ = enable;
         if (enable)
+            mcp_.setListenOnlyMode();
+        else
+            mcp_.setNormalMode();
+    }
+
+    void reset() override {
+        mcp_.reset();
+        mcp_.setBitrate(CAN_500KBPS, MCP_CRYSTAL_MHZ);
+        if (listen_only_)
             mcp_.setListenOnlyMode();
         else
             mcp_.setNormalMode();

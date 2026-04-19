@@ -2,10 +2,6 @@
 
 // ── CAN IDs ───────────────────────────────────────────────────────────────────
 #define CAN_ID_STW_ACTN_RQ    0x045u  // 69   - STW_ACTN_RQ:  steering stalk (Legacy follow distance)
-#define CAN_ID_TRIP_PLANNING  0x082u  // 130  - UI_tripPlanning: precondition trigger
-#define CAN_ID_BMS_HV_BUS     0x132u  // 306  - BMS_hvBusStatus: pack voltage / current
-#define CAN_ID_BMS_SOC        0x292u  // 658  - BMS_socStatus:   state of charge
-#define CAN_ID_BMS_THERMAL    0x312u  // 786  - BMS_thermalStatus: battery temp
 #define CAN_ID_GTW_CAR_STATE  0x318u  // 792  - GTW_carState:    OTA detection
 #define CAN_ID_EPAS_STATUS    0x370u  // 880  - EPAS3P_sysStatus: nag killer target
 #define CAN_ID_GTW_CAR_CONFIG 0x398u  // 920  - GTW_carConfig:   HW version detection
@@ -37,17 +33,26 @@
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 #define WIRING_WARN_MS        5000u   // Red LED / serial warning if no CAN after this
-#define PRECOND_INTERVAL_MS    500u   // Re-inject 0x082 precondition every N ms
-#define BMS_PRINT_MS          1000u   // BMS serial print interval
 #define BUTTON_DEBOUNCE_MS      50u
 #define LONG_PRESS_MS         3000u   // Long press → toggle NAG killer
 #define DOUBLE_CLICK_MS        400u   // Max gap between two clicks for double-click
 #define STATUS_PRINT_MS       5000u   // Periodic status line when Active
 
 // OTA detection hardening on GTW_carState (0x318)
-// Some firmware versions keep non-zero states when no update is actively running.
-// We only treat one specific raw value as "update in progress" and require
-// consecutive-frame confirmation to avoid false positives.
-#define OTA_IN_PROGRESS_RAW_VALUE  1u
-#define OTA_ASSERT_FRAMES          3u
+// GTW_updateInProgress bits [1:0] of byte 6:
+//   0 = No update, 1 = Update available, 2 = Installing, 3 = Scheduled
+// Only value 2 (installing) should suspend TX.  Value 1 just means an update
+// is available but NOT actively being installed — ignore it.
+#define OTA_IN_PROGRESS_RAW_VALUE  2u
+#define OTA_ASSERT_FRAMES         10u
 #define OTA_CLEAR_FRAMES           6u
+
+// Car sleep / wake detection
+// When no CAN frames are received for this long, consider the car asleep.
+#define CAR_SLEEP_TIMEOUT_MS    3000u
+
+// HW version fallback detection hardening
+// Delay before accepting fallback-based HW detection (gives 0x398 time to arrive).
+#define HW_FALLBACK_DELAY_MS    3000u
+// Number of 0x399 frames required before committing to HW4 via fallback.
+#define HW_FALLBACK_CONFIRM        5u

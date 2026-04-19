@@ -25,6 +25,10 @@ public:
      *  Implementations must reinitialise the hardware as needed. */
     virtual void setListenOnly(bool enable) = 0;
 
+    /** Force a full hardware reinitialisation (stop + start) in the current mode.
+     *  Use after prolonged CAN silence to clear error states. */
+    virtual void reset() = 0;
+
     virtual ~CanDriver() = default;
 };
 

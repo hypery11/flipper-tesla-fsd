@@ -19,6 +19,7 @@ void led_set(LedColor color) {
         case LED_GREEN:  c = g_strip.Color(  0, 255,   0); break;
         case LED_YELLOW: c = g_strip.Color(255, 200,   0); break;
         case LED_RED:    c = g_strip.Color(255,   0,   0); break;
+        case LED_PURPLE: c = g_strip.Color(128,   0, 255); break;
         default:         c = 0;                             break;
     }
     g_strip.setPixelColor(0, c);

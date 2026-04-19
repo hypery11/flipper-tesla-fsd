@@ -7,6 +7,7 @@ typedef enum {
     LED_GREEN,    // Active mode (FSD transmitting)
     LED_YELLOW,   // OTA detected (TX suspended)
     LED_RED,      // Error (no CAN traffic / wiring fault)
+    LED_PURPLE,   // Car asleep (no CAN traffic, TX suspended)
 } LedColor;
 
 void led_init();

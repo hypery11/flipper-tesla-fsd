@@ -51,7 +51,6 @@ void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
     state->suppress_speed_chime = true;
     state->emergency_vehicle_detect = false;
     state->force_fsd            = false;
-    state->bms_output           = false;
 
     // Default speed profile per HW version
     if (hw == TeslaHW_HW4)
@@ -67,6 +66,7 @@ void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
 bool fsd_can_transmit(const FSDState *state) {
     if (state->op_mode == OpMode_ListenOnly) return false;
     if (state->tesla_ota_in_progress)        return false;
+    if (state->car_asleep)                   return false;
     return true;
 }
 
@@ -310,45 +310,6 @@ bool fsd_handle_nag_killer(FSDState *state, const CanFrame *frame, CanFrame *out
     state->nag_echo_count++;
     state->nag_suppressed = true;
     return true;
-}
-
-// ── BMS read-only parsers ─────────────────────────────────────────────────────
-
-void fsd_handle_bms_hv(FSDState *state, const CanFrame *frame) {
-    if (frame->dlc < 4) return;
-    // Voltage: uint16 little-endian bytes 1:0, LSB = 0.01 V
-    uint16_t raw_v = ((uint16_t)frame->data[1] << 8) | frame->data[0];
-    // Current: int16 little-endian bytes 3:2, LSB = 0.1 A (signed)
-    int16_t  raw_i = (int16_t)(((uint16_t)frame->data[3] << 8) | frame->data[2]);
-    state->pack_voltage_v = raw_v * 0.01f;
-    state->pack_current_a = raw_i * 0.1f;
-    state->bms_seen = true;
-}
-
-void fsd_handle_bms_soc(FSDState *state, const CanFrame *frame) {
-    if (frame->dlc < 2) return;
-    // SoC: 10-bit little-endian (bits 9:0 across bytes 1:0), LSB = 0.1 %
-    uint16_t raw = ((uint16_t)(frame->data[1] & 0x03u) << 8) | frame->data[0];
-    state->soc_percent = raw * 0.1f;
-    state->bms_seen = true;
-}
-
-void fsd_handle_bms_thermal(FSDState *state, const CanFrame *frame) {
-    if (frame->dlc < 6) return;
-    // Temperatures: raw byte − 40 = °C
-    state->batt_temp_min_c = (int8_t)((int)frame->data[4] - 40);
-    state->batt_temp_max_c = (int8_t)((int)frame->data[5] - 40);
-    state->bms_seen = true;
-}
-
-// ── Precondition trigger ──────────────────────────────────────────────────────
-
-void fsd_build_precondition_frame(CanFrame *frame) {
-    memset(frame, 0, sizeof(CanFrame));
-    frame->id  = CAN_ID_TRIP_PLANNING;
-    frame->dlc = 8;
-    // byte0: bit0 = tripPlanningActive, bit2 = requestActiveBatteryHeating
-    frame->data[0] = 0x05u;
 }
 
 // ── TLSSC Restore (0x331) ─────────────────────────────────────────────────────

@@ -11,11 +11,6 @@ Unlock Tesla FSD with an ESP32 + CAN transceiver via OBD-II. No Flipper Zero nee
 >
 > **If you test this on another vehicle model, please report your results in this PR thread.**
 
-> [!WARNING]
-> **BMS section is currently not working in real vehicle usage.**
->
-> The BMS parser and dashboard fields are implemented in code, but on current tested setup they do not provide reliable/usable live data yet.
-
 > [!IMPORTANT]
 > The device boots in **Listen-Only mode** by default and will **not transmit any CAN frames** until the user explicitly switches to Active mode via the physical button or Web Dashboard UI. This ensures safe first-boot behavior.
 
@@ -35,8 +30,7 @@ All CAN protocol handling from hypery11's Flipper Zero implementation (`fsd_hand
 - Speed profile mapping from follow-distance stalk
 - OTA update detection and automatic TX suspension
 - ISA speed warning chime suppression (HW4)
-- BMS data parsing logic (voltage, current, SOC, temperature) — currently not reliable in real use
-- Battery precondition trigger
+- TLSSC Restore via DAS config spoof (`0x331`)
 - CRC/checksum recalculation after frame modification
 - DLC length validation on all handlers
 
@@ -46,21 +40,19 @@ All CAN protocol handling from hypery11's Flipper Zero implementation (`fsd_hand
 
 - **WiFi AP mode** — connects without internet, SSID: `Tesla-FSD`, password: `12345678`
 - **Tesla dark theme UI** — mobile-first responsive design (optimized for phone in portrait)
+  - Tabbed interface: Dashboard, Controls, CAN Bus, Device
   - Dark background (#0a0a1a) with accent gradients, inspired by Tesla's in-car UI
   - All HTML/CSS/JS embedded in firmware (no external CDN dependencies)
 - **Real-time WebSocket push** — 1 Hz state updates via WebSocket on port 81
-- **FSD Status Panel** — FSD active/waiting, Listen-Only/Active mode, HW version, NAG Killer state
-- **Battery SOC Ring** — animated circular progress bar with color coding (green >60%, yellow >30%, red ≤30%)
-- **BMS Live Data UI hooks** — fields exist in UI/API, but BMS section is currently not working reliably on tested vehicle setup
-- **CAN Bus Stats** — RX frame count, TX modified count, CRC errors, frames/second
-- **Web Controls** — toggle buttons for:
-  - Activate/Stop FSD (Listen-Only ↔ Active mode switch)
-  - NAG Killer on/off
-  - BMS serial output on/off
-  - Force FSD toggle
-- **OTA Warning Banner** — pulsing red alert when vehicle OTA update is detected
+- **Dashboard tab** — FSD status, operation mode, HW version, vehicle detection
+- **Controls tab** — Toggle switches for all features + mode activation button
+- **CAN Bus tab** — RX frame count, TX modified count, CRC errors, frames/second, NAG echo and TLSSC restore counters
+- **Device tab** — firmware build date, uptime counter, WiFi client count, speed profile
+- **OTA Warning Banner** — pulsing red alert when vehicle OTA update is detected (installing only)
+- **Sleep Banner** — purple alert when car is asleep (no CAN traffic)
 - **Connection Status** — green/red dot indicator with auto-reconnect on WebSocket disconnect
-- **Device Info** — firmware build date, uptime counter, WiFi client count
+- **NVS Persistence** — all toggle settings saved to flash and restored on boot
+- **Auto-Activate on Wake** — optional: automatically switch to Active mode on car wake or ESP32 boot
 - **REST API** — `GET /api/status` returns full JSON state
 
 ### CAN Driver Abstraction
@@ -73,19 +65,35 @@ Dual CAN driver support (compile-time switch):
 
 ## Features
 
-| Feature | CAN ID | Description |
-|---------|--------|-------------|
-| **FSD Unlock** | `0x3FD` mux0 | bit46 = 1 activates FSD (HW3/HW4/Legacy) |
-| **NAG Killer** | `0x370` | Suppresses hands-on-wheel reminder |
-| **Speed Profile** | `0x3FD` mux2 | Follow-distance stalk maps to speed offset |
-| **ISA Chime Suppress** | `0x399` | Kills speed warning chime (HW4 only) |
-| **Battery Precondition** | `0x082` | Frame builder implemented; no user control exposed yet |
-| **BMS Dashboard** | `0x132`/`0x292`/`0x312` | Parsing/UI path implemented, but currently not working reliably |
-| **OTA Protection** | `0x318` | Auto-stops TX when OTA update detected |
-| **HW Auto-Detect** | `0x398` | Reads GTW_carConfig for HW version |
-| **Listen-Only Mode** | — | Default on boot, passive monitoring only |
-| **Wiring Check** | — | rx_count + CRC error monitoring |
-| **WiFi Dashboard** | — | Real-time web UI at 192.168.4.1 |
+| Feature | CAN ID | HW Compat | Description |
+|---------|--------|-----------|-------------|
+| **FSD Unlock** | `0x3FD` mux0 | All (Legacy/HW3/HW4) | bit46 = 1 activates FSD |
+| **NAG Killer** | `0x370` | All | Suppresses hands-on-wheel reminder via counter+1 echo |
+| **Force FSD** | `0x3FD` mux0 | All | Bypass UI selection check — FSD always active |
+| **Speed Profile** | `0x3FD` mux2 | All | Follow-distance stalk maps to speed offset |
+| **TLSSC Restore** | `0x331` | All | DAS config spoof — restores tier via autopilot config |
+| **ISA Chime Suppress** | `0x399` | **HW4 only** | Kills speed warning chime |
+| **Emergency Vehicle Detect** | `0x3FD` mux0 bit59 | **HW4 only** | Enables emergency vehicle detection bit |
+| **OTA Protection** | `0x318` | All | Auto-stops TX when OTA *installing* detected |
+| **Car Sleep / Wake** | — | All | Detects car sleep (no CAN), auto-resumes on wake |
+| **Auto-Activate on Wake** | — | All | Automatically switches to Active mode on wake / boot |
+| **HW Auto-Detect** | `0x398` | All | Reads GTW_carConfig with fallback detection |
+| **Listen-Only Mode** | — | All | Default on boot, passive monitoring only |
+| **NVS Persistence** | — | All | Saves toggle settings to flash (survives reboot) |
+| **WiFi Dashboard** | — | All | Real-time web UI at 192.168.4.1 |
+
+### Persisted Settings (NVS)
+
+These settings are saved to flash and restored automatically on boot:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| NAG Killer | ON | Suppress hands-on-wheel nag |
+| Speed Chime Suppress | ON | ISA chime suppress (HW4 only) |
+| Force FSD | OFF | Bypass FSD UI selection check |
+| TLSSC Restore | OFF | DAS config spoof for tier restore |
+| Auto-Activate on Wake | OFF | Auto-switch to Active on boot/wake |
+| Emergency Vehicle Detect | OFF | Enable EVD bit (HW4 only) |
 
 ---
 
@@ -132,11 +140,8 @@ Located in the rear center console area:
 | CAN ID | Name | Purpose |
 |--------|------|---------|
 | `0x045` | STW_ACTN_RQ | Steering stalk (Legacy follow distance) |
-| `0x082` | TRIP_PLANNING | Battery precondition trigger |
-| `0x132` | BMS_HV_BUS | Battery voltage / current |
-| `0x292` | BMS_SOC | Battery state of charge |
-| `0x312` | BMS_THERMAL | Battery temperature |
 | `0x318` | GTW_CAR_STATE | Vehicle state (OTA detection) |
+| `0x331` | DAS_AP_CONFIG | DAS autopilot config (TLSSC restore target) |
 | `0x370` | EPAS_STATUS | EPAS status (NAG killer target) |
 | `0x398` | GTW_CAR_CONFIG | HW version detection |
 | `0x399` | ISA_SPEED | Speed warning chime (HW4) |
@@ -150,11 +155,11 @@ Bus speed: **500 kbps**
 
 ## HW Support
 
-| Tesla HW | Bits Modified | Speed Profile |
-|----------|---------------|---------------|
-| Legacy (HW1/HW2) | bit46 | 3 levels (0-2) |
-| HW3 | bit46 | 3 levels (0-2) |
-| HW4 (FSD V14+) | bit46 + bit60, bit47 | 5 levels (0-4) |
+| Tesla HW | Bits Modified | Speed Profile | Exclusive Features |
+|----------|---------------|---------------|--------------------|
+| Legacy (HW1/HW2) | bit46 | 3 levels (0-2) | — |
+| HW3 | bit46 | 3 levels (0-2) + speed offset | — |
+| HW4 (FSD V14+) | bit46 + bit60, bit47 | 5 levels (0-4) | ISA chime suppress, Emergency vehicle detect |
 
 ---
 
@@ -186,13 +191,13 @@ pio device monitor -b 115200
 ============================
  Tesla FSD Unlock — ESP32
 ============================
-[FSD] Build: Apr  8 2026 18:59:17
+[FSD] Build: Apr 19 2026 12:00:00
 [CAN] Driver: ESP32 TWAI (M5Stack ATOM Lite + ATOMIC CAN Base)
+[NVS] Loaded: nag=1 chime=1 force=0 tlssc=0 auto_wake=0 emerg=0
 [CAN] 500 kbps — Listen-Only
 [BTN] Single click : toggle Listen-Only / Active
 [BTN] Long press 3s: toggle NAG Killer
-[BTN] Double click : toggle BMS serial output
-[LED] Blue=Listen  Green=Active  Yellow=OTA  Red=Error
+[LED] Blue=Listen  Green=Active  Yellow=OTA  Purple=Sleep  Red=Error
 [WiFi] AP: "Tesla-FSD"  IP: 192.168.4.1
 [WiFi] Dashboard: http://192.168.4.1
 [Web] HTTP :80  WS :81 — ready
@@ -216,7 +221,6 @@ pio device monitor -b 115200
 |---------------|----------|
 | Single click | Toggle Listen-Only ↔ Active mode |
 | Long press (3s) | Toggle NAG Killer on/off |
-| Double click | Toggle BMS serial output |
 
 ### LED Status
 
@@ -225,22 +229,24 @@ pio device monitor -b 115200
 | 🔵 Blue | Listen-Only (passive monitoring) |
 | 🟢 Green | Active (FSD enabled, transmitting) |
 | 🟡 Yellow | OTA detected (TX suspended) |
-| 🔴 Red | Error (no CAN signal / CRC errors) |
+| 🟣 Purple | Car asleep (no CAN traffic) |
+| 🔴 Red | Error (no CAN signal after 5s) |
 
 ### WiFi Dashboard
 
 1. Connect phone to WiFi: **Tesla-FSD** (password: **12345678**)
 2. Open browser: **http://192.168.4.1**
-3. Monitor and control everything from the web UI
+3. Monitor and control everything from the tabbed web UI
 4. REST API available at `http://192.168.4.1/api/status`
 
 ---
 
 ## Safety
 
-- **OTA Protection** — automatically stops all CAN TX when a software update is detected on `0x318`
+- **OTA Protection** — automatically stops all CAN TX when a software update is *installing* (raw state = 2 on `0x318`); "update available" (state 1) does NOT suspend TX
 - **Listen-Only default** — device will not modify any CAN frames until explicitly switched to Active mode
-- **Wiring diagnostics** — monitors rx_count and CRC error counter; red LED if no CAN traffic
+- **Sleep detection** — suspends TX when car goes to sleep (no CAN traffic for 3s), resumes on wake
+- **Wiring diagnostics** — monitors rx_count and CRC error counter; red LED if no CAN traffic after 5s
 - **DLC validation** — checks frame data length before parsing to prevent buffer overflows
 - **Unplug = reset** — remove the device and restart the car to clear any modified state
 - **WiFi isolated** — AP mode only, no internet connection, no data leaves the device
@@ -267,13 +273,14 @@ This table is informational from field reports/upstream notes. The ESP32 code it
 ```
 esp32/
 ├── .firmware/
-│   ├── main.cpp            — Init, button handling, main loop
+│   ├── main.cpp            — Init, button handling, CAN dispatch, main loop
 │   ├── fsd_handler.cpp/h   — CAN protocol logic (ported from hypery11)
 │   ├── can_driver.cpp/h    — CAN driver abstraction (TWAI / MCP2515)
 │   ├── wifi_manager.cpp/h  — WiFi AP setup
 │   ├── web_dashboard.cpp/h — HTTP server + WebSocket + embedded UI
+│   ├── nvs_settings.cpp/h  — NVS persistence for toggle settings
 │   ├── led.cpp/h           — NeoPixel LED status control
-│   └── config.h            — CAN IDs and pin definitions
+│   └── config.h            — CAN IDs, pin definitions, timing constants
 ├── platformio.ini          — Build configs (m5stack-atom / esp32-mcp2515)
 └── README.md
 ```
