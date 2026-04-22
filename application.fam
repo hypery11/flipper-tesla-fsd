@@ -4,7 +4,7 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     entry_point="tesla_fsd_main",
     requires=["gui"],
-    stack_size=4 * 1024,
+    stack_size=8 * 1024,
     fap_icon="icon.png",
     fap_category="GPIO",
     fap_icon_assets="assets",
