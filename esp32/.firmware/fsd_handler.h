@@ -31,7 +31,8 @@ struct FSDState {
     int            speed_profile;   // 0-4 depending on HW
     int            speed_offset;    // HW3 only, 0-100
 
-    bool           fsd_enabled;     // true when car's UI has FSD selected (mux0)
+    bool           fsd_enabled;         // true when car's UI has FSD selected (mux0)
+    bool           fsd_inject_enabled;  // master FSD injection switch (independent of force_fsd)
     bool           nag_suppressed;  // true after first nag-killer echo sent
 
     uint32_t       frames_modified; // TX counter
@@ -54,6 +55,27 @@ struct FSDState {
     uint32_t       seen_gtw_car_state;      // 0x318 seen count
     uint32_t       seen_gtw_car_config;     // 0x398 seen count
     uint32_t       seen_ap_control;         // 0x3FD seen count
+    uint32_t       seen_bms_hv;             // 0x132 seen count
+    uint32_t       seen_bms_soc;            // 0x292 seen count
+    uint32_t       seen_bms_thermal;        // 0x312 seen count
+    uint32_t       seen_gtw_config_eth;     // 0x7FF seen count
+
+    // ── BAN Shield (0x7FF GTW_carConfig_ETH) ───────────────────────────────
+    bool           ban_shield;              // master enable
+    bool           ban_shield_armed;        // true once all mux snapshots captured
+    uint8_t        ban_shield_snapshot[8][8];
+    bool           ban_shield_snapshot_valid[8];
+    uint32_t       ban_shield_blocks;       // number of frames overwritten
+
+    // ── BMS read-only sniff (enabled when bms_enabled=true) ────────────────
+    bool           bms_enabled;       // read/display BMS data when true
+    bool           bms_output;        // print BMS data to serial (debug)
+    bool           bms_seen;
+    float          pack_voltage_v;
+    float          pack_current_a;
+    float          soc_percent;
+    int8_t         batt_temp_min_c;
+    int8_t         batt_temp_max_c;
 
     // ── TLSSC Restore (0x331 DAS config spoof) ──────────────────────────────
     bool           tlssc_restore;
@@ -111,3 +133,16 @@ bool fsd_handle_nag_killer(FSDState *state, const CanFrame *frame, CanFrame *out
  *  Overwrites byte[0] lower 6 bits to 0x1B (SELF_DRIVING).
  *  Returns true if frame was modified and should be re-sent. */
 bool fsd_handle_tlssc_restore(FSDState *state, CanFrame *frame);
+
+/** 0x7FF BAN Shield: learn healthy mux snapshots, then block/overwrite changes.
+ *  Returns true if frame data was overwritten and should be re-sent immediately. */
+bool fsd_handle_ban_shield(FSDState *state, CanFrame *frame);
+
+/** Parse BMS_hvBusStatus (0x132) — updates pack_voltage_v / pack_current_a. */
+void fsd_handle_bms_hv(FSDState *state, const CanFrame *frame);
+
+/** Parse BMS_socStatus (0x292) — updates soc_percent. */
+void fsd_handle_bms_soc(FSDState *state, const CanFrame *frame);
+
+/** Parse BMS_thermalStatus (0x312) — updates batt_temp_min/max_c. */
+void fsd_handle_bms_thermal(FSDState *state, const CanFrame *frame);

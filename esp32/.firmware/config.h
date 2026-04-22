@@ -10,6 +10,10 @@
 #define CAN_ID_FOLLOW_DIST    0x3F8u  // 1016 - DAS_followDistance: speed profile source
 #define CAN_ID_DAS_AP_CONFIG  0x331u  // 817  - DAS autopilot config (tier restore target, ~1 Hz)
 #define CAN_ID_AP_CONTROL     0x3FDu  // 1021 - DAS_autopilotControl: HW3 / HW4 core
+#define CAN_ID_GTW_CONFIG_ETH 0x7FFu  // 2047 - GTW_carConfig_ETH (BAN Shield target)
+#define CAN_ID_BMS_HV_BUS     0x132u  // 306  - BMS_hvBusStatus: pack voltage & current (read-only)
+#define CAN_ID_BMS_SOC        0x292u  // 658  - BMS_socStatus: state of charge (read-only)
+#define CAN_ID_BMS_THERMAL    0x312u  // 786  - BMS_thermalStatus: battery temps (read-only)
 
 // ── GPIO ──────────────────────────────────────────────────────────────────────
 #if defined(BOARD_LILYGO)

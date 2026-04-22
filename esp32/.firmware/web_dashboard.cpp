@@ -1,5 +1,5 @@
 /*
- * web_dashboard.cpp — HTTP + WebSocket dashboard for Tesla FSD ESP32
+ * web_dashboard.cpp — HTTP + WebSocket dashboard for Tesla CAN Controller ESP32
  *
  * HTTP  :80  → serves the embedded HTML page
  * WS    :81  → pushes JSON state every 1 s; receives control commands
@@ -14,6 +14,7 @@
 #include "web_dashboard.h"
 #include "can_dump.h"
 #include "nvs_settings.h"
+#include "wifi_manager.h"
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 #include <WiFi.h>
@@ -47,7 +48,7 @@ static const char WEB_HTML[] PROGMEM = R"rawliteral(
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0a0a1a">
 <link rel="icon" href="data:,">
-<title>Tesla FSD</title>
+<title>Tesla CAN Controller</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -153,6 +154,11 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
 
 /* ── Footer ── */
 .foot{text-align:center;padding:12px 0 0;font-size:.6em;color:var(--text3)}
+/* ── Inputs ── */
+.inp{width:100%;background:var(--card2);border:1px solid var(--border);border-radius:8px;
+  padding:8px 10px;color:var(--text);font-size:.85em;outline:none}
+.inp:focus{border-color:var(--accent)}
+.inp-lbl{font-size:.75em;color:var(--text2);margin-bottom:4px}
 </style>
 </head>
 <body>
@@ -160,7 +166,7 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
 
 <!-- Header -->
 <div class="hdr">
-  <h1>Tesla FSD</h1>
+  <h1>Tesla CAN Controller</h1>
   <div class="sub">ESP32 CAN Controller</div>
   <div class="cdot" id="dot"></div>
 </div>
@@ -172,8 +178,9 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
 <div class="tabs">
   <div class="tab active" onclick="showTab(0)">Dashboard</div>
   <div class="tab" onclick="showTab(1)">Controls</div>
-  <div class="tab" onclick="showTab(2)">CAN Bus</div>
-  <div class="tab" onclick="showTab(3)">Device</div>
+  <div class="tab" onclick="showTab(2)">CAN</div>
+  <div class="tab" onclick="showTab(3)">BMS</div>
+  <div class="tab" onclick="showTab(4)">Device</div>
 </div>
 
 <!-- ═══ TAB 0: Dashboard ═══ -->
@@ -182,10 +189,6 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
   <!-- Status -->
   <div class="card">
     <div class="card-head"><div class="icon ic-s">S</div><h2>Status</h2></div>
-    <div class="row">
-      <span class="lbl">FSD</span>
-      <span class="pill off" id="fsdSt"><span class="pd"></span>--</span>
-    </div>
     <div class="row">
       <span class="lbl">Mode</span>
       <span class="pill off" id="opMode"><span class="pd"></span>--</span>
@@ -198,6 +201,10 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
       <span class="lbl">Vehicle</span>
       <span class="pill off" id="canVeh"><span class="pd"></span>--</span>
     </div>
+    <div class="row">
+      <span class="lbl">BAN Shield</span>
+      <span class="pill off" id="banSt"><span class="pd"></span>--</span>
+    </div>
   </div>
 
 </div>
@@ -206,15 +213,26 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
 <div class="pane" id="p1">
 
   <div class="card">
-    <div class="card-head"><div class="icon ic-c">C</div><h2>Mode</h2></div>
-    <button id="btnMode" class="btn-main btn-act" onclick="toggleMode()">ACTIVATE FSD</button>
+    <div class="card-head"><div class="icon ic-c">T</div><h2>Transmission Mode</h2></div>
+    <div class="row">
+      <span class="lbl">TX Active (off = Listen-Only)</span>
+      <label class="sw"><input type="checkbox" id="swTxMode" onchange="cmd('mode',this.checked)"><span class="sl2"></span></label>
+    </div>
   </div>
 
   <div class="card">
     <div class="card-head"><div class="icon ic-s">&#9881;</div><h2>Features</h2></div>
     <div class="row">
+      <span class="lbl">FSD Inject</span>
+      <label class="sw"><input type="checkbox" id="swFsdInject" onchange="cmd('fsd_inject',this.checked)"><span class="sl2"></span></label>
+    </div>
+    <div class="row">
       <span class="lbl">NAG Killer</span>
       <label class="sw"><input type="checkbox" id="swNag" onchange="cmd('nag',this.checked)"><span class="sl2"></span></label>
+    </div>
+    <div class="row">
+      <span class="lbl">BAN Shield</span>
+      <label class="sw"><input type="checkbox" id="swBan" onchange="cmd('ban_shield',this.checked)"><span class="sl2"></span></label>
     </div>
     <div class="row">
       <span class="lbl">Force FSD</span>
@@ -272,19 +290,83 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
   </div>
 </div>
 
-<!-- SD Card -->
-<div class="card">
-  <div class="card-head"><div class="icon ic-d">S</div><h2>SD Card</h2></div>
-  <div class="row">
-    <span class="lbl">Dump Status</span>
-    <span class="pill off" id="dumpSt"><span class="pd"></span>Idle</span>
+<!-- ═══ TAB 3: BMS ═══ -->
+<div class="pane" id="p3">
+
+  <div class="card">
+    <div class="card-head"><div class="icon ic-b">⚡</div><h2>Battery Management</h2></div>
+    <div class="row">
+      <span class="lbl">BMS Enabled</span>
+      <label class="sw"><input type="checkbox" id="swBmsEn" onchange="cmd('bms_enable',this.checked)"><span class="sl2"></span></label>
+    </div>
+    <div class="row">
+      <span class="lbl">Status</span>
+      <span class="pill off" id="bmsSt"><span class="pd"></span>--</span>
+    </div>
+    <div class="row">
+      <span class="lbl">Frames Seen</span>
+      <span id="bmsFrames" style="font-variant-numeric:tabular-nums">0</span>
+    </div>
   </div>
-  <button id="btnFmt" class="btn-main btn-stop" onclick="sdFormat()" style="margin-top:8px">FORMAT SD CARD</button>
-  <div id="fmtOut" style="font-size:.75em;color:var(--text2);margin-top:8px;display:none"></div>
+
+  <div class="card">
+    <div class="card-head"><div class="icon ic-b">V</div><h2>Live Data</h2></div>
+    <div class="row">
+      <span class="lbl">Pack Voltage</span>
+      <span id="bmsVolt">--V</span>
+    </div>
+    <div class="row">
+      <span class="lbl">Pack Current</span>
+      <span id="bmsCurr">--A</span>
+    </div>
+    <div class="row">
+      <span class="lbl">State of Charge</span>
+      <span id="bmsSoc" class="ring">--</span>
+    </div>
+    <div class="row">
+      <span class="lbl">Temperature</span>
+      <span id="bmsTemp">--°C</span>
+    </div>
+  </div>
+
 </div>
 
-<!-- ═══ TAB 3: Device ═══ -->
-<div class="pane" id="p3">
+<!-- ═══ TAB 4: Device ═══ -->
+<div class="pane" id="p4">
+
+  <!-- SD Card -->
+  <div class="card">
+    <div class="card-head"><div class="icon ic-d">S</div><h2>SD Card</h2></div>
+    <div class="row">
+      <span class="lbl">Dump Status</span>
+      <span class="pill off" id="dumpSt"><span class="pd"></span>Idle</span>
+    </div>
+    <button id="btnFmt" class="btn-main btn-stop" onclick="sdFormat()" style="margin-top:8px">FORMAT SD CARD</button>
+    <div id="fmtOut" style="font-size:.75em;color:var(--text2);margin-top:8px;display:none"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><div class="icon ic-b">W</div><h2>WiFi AP</h2></div>
+    <div class="row">
+      <span class="lbl">Current SSID</span>
+      <span id="wifiSSID" style="font-size:.82em;color:var(--text2)">--</span>
+    </div>
+    <div class="row">
+      <span class="lbl">Current Password</span>
+      <span id="wifiPass" style="font-size:.82em;color:var(--text2)">--</span>
+    </div>
+    <div class="sep">Change credentials</div>
+    <div style="margin-bottom:8px">
+      <div class="inp-lbl">New SSID (1&ndash;32 chars)</div>
+      <input class="inp" id="inSSID" maxlength="32" placeholder="Tesla-FSD" autocomplete="off">
+    </div>
+    <div style="margin-bottom:10px">
+      <div class="inp-lbl">Password (min 8 chars, leave empty = unchanged)</div>
+      <input class="inp" type="password" id="inPass" maxlength="63" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" autocomplete="new-password">
+    </div>
+    <button class="btn-main btn-act" onclick="saveWifi()" style="margin-bottom:4px">SAVE</button>
+    <div id="wifiOut" style="font-size:.75em;margin-top:4px;display:none"></div>
+  </div>
 
   <div class="card">
     <div class="card-head"><div class="icon ic-d">D</div><h2>Device Info</h2></div>
@@ -306,9 +388,13 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     </div>
   </div>
 
+  <div class="card">
+    <button class="btn-main btn-stop" onclick="reboot()">REBOOT</button>
+  </div>
+
 </div>
 
-<div class="foot">Tesla FSD ESP32 &middot; M5Stack ATOM Lite</div>
+<div class="foot">Tesla CAN Controller ESP32 &middot; M5Stack ATOM Lite</div>
 </div><!-- /wrap -->
 
 <script>
@@ -335,30 +421,28 @@ function pill(id,on,txt){
 
 function upd(d){
   // Dashboard — Status pills
-  pill('fsdSt', d.fsd_enabled, d.fsd_enabled?'Active':'Waiting');
-  pill('opMode', d.op_mode===1, d.op_mode===1?'Active':'Listen-Only');
+  pill('opMode', d.op_mode===1, d.op_mode===1?'TX Mode':'Listen-Only');
   var hwEl=document.getElementById('hwVer');
   hwEl.className='pill '+(d.hw_version>0?'on':'off');
   hwEl.innerHTML='<span class="pd"></span>'+(HW[d.hw_version]||'?');
   pill('canVeh', d.can_vehicle_detected, d.can_vehicle_detected?'Detected':'No CAN');
+  var banTxt=d.ban_shield_armed?'Armed ('+d.ban_shield_blocks+')':(d.ban_shield?'Learning':'Off');
+  pill('banSt', d.ban_shield_armed, banTxt);
 
   // Banners
   document.getElementById('otaBanner').style.display=d.ota?'block':'none';
   document.getElementById('sleepBanner').style.display=d.car_asleep?'block':'none';
 
-  // Controls — mode button
-  var act=d.op_mode===1;
-  var btn=document.getElementById('btnMode');
-  btn.textContent=act?'STOP \u2192 Listen-Only':'ACTIVATE FSD \u2192 Active';
-  btn.className='btn-main '+(act?'btn-stop':'btn-act');
-
   // Switches sync
+  document.getElementById('swTxMode').checked=d.op_mode===1;
+  document.getElementById('swFsdInject').checked=d.fsd_inject_enabled;
   document.getElementById('swNag').checked=d.nag_killer;
   document.getElementById('swFsd').checked=d.force_fsd;
   document.getElementById('swTlssc').checked=d.tlssc_restore;
   document.getElementById('swDump').checked=!!d.can_dump;
   pill('dumpSt',d.can_dump,d.can_dump?'Recording':'Idle');
   document.getElementById('swAutoWake').checked=d.auto_wake;
+  document.getElementById('swBan').checked=d.ban_shield;
   document.getElementById('swChime').checked=d.chime;
   document.getElementById('swEmerg').checked=d.emerg_veh;
 
@@ -370,6 +454,20 @@ function upd(d){
   document.getElementById('nagEcho').textContent=d.nag_echo_count;
   document.getElementById('tlsscCnt').textContent=d.tlssc_restore_count;
 
+  // BMS Tab
+  document.getElementById('swBmsEn').checked=d.bms_enabled;
+  var bmsOk=d.bms_enabled && d.bms_seen;
+  pill('bmsSt', bmsOk, bmsOk?'Reading':'--');
+  var bmsF=d.bms_hv_seen+d.bms_soc_seen+d.bms_thermal_seen;
+  document.getElementById('bmsFrames').textContent=bmsF;
+  document.getElementById('bmsVolt').textContent=d.bms_voltage.toFixed(1)+'V';
+  document.getElementById('bmsCurr').textContent=(d.bms_current>=0?'+':'')+d.bms_current.toFixed(1)+'A';
+  document.getElementById('bmsSoc').textContent=d.bms_soc.toFixed(1)+'%';
+  document.getElementById('bmsTemp').textContent=d.bms_temp_min+'–'+d.bms_temp_max+'°C';
+
+  document.getElementById('wifiSSID').textContent=d.wifi_ssid||'--';
+  document.getElementById('wifiPass').textContent=d.wifi_pass||'--';
+
   // Device
   document.getElementById('fwBuild').textContent=d.fw_build;
   document.getElementById('uptime').textContent=fmt(d.uptime_s);
@@ -377,6 +475,31 @@ function upd(d){
   document.getElementById('speedProf').textContent=d.speed_profile;
 }
 
+function cmd(c,v){
+  if(ws&&ws.readyState===1) ws.send(JSON.stringify({cmd:c,value:v}));
+}
+function reboot(){
+  if(!confirm('Reboot the device?'))return;
+  fetch('/reboot').catch(function(){});
+}
+function saveWifi(){
+  var ssid=document.getElementById('inSSID').value.trim();
+  var pass=document.getElementById('inPass').value;
+  if(ssid.length<1||ssid.length>32){alert('SSID: 1-32 characters');return;}
+  if(pass.length>0&&pass.length<8){alert('Password: 8 characters minimum');return;}
+  var out=document.getElementById('wifiOut');
+  out.style.display='none';
+  fetch('/wificreds',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ssid:ssid,pass:pass})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      out.style.display='block';
+      out.style.color=d.ok?'var(--accent)':'var(--red)';
+      out.textContent=d.msg;
+    }).catch(function(){
+      out.style.display='block';out.style.color='var(--red)';out.textContent='Network error';
+    });
+}
 function sdFormat(){
   if(!confirm('Format SD card? All data will be lost.'))return;
   var btn=document.getElementById('btnFmt');
@@ -392,11 +515,6 @@ function sdFormat(){
     btn.disabled=false;btn.textContent='FORMAT SD CARD';
   });
 }
-function cmd(c,v){
-  if(ws&&ws.readyState===1) ws.send(JSON.stringify({cmd:c,value:v}));
-}
-function toggleMode(){ cmd('mode',null); }
-
 function conn(){
   ws=new WebSocket('ws://'+location.hostname+':81/');
   ws.onopen=function(){
@@ -440,6 +558,7 @@ static String build_json() {
     j += "\"car_asleep\":";    j += g_state->car_asleep               ? "true" : "false"; j += ',';
     j += "\"nag_killer\":";    j += g_state->nag_killer               ? "true" : "false"; j += ',';
     j += "\"force_fsd\":";     j += g_state->force_fsd                ? "true" : "false"; j += ',';
+    j += "\"fsd_inject_enabled\":"; j += g_state->fsd_inject_enabled  ? "true" : "false"; j += ',';
     j += "\"tlssc_restore\":"; j += g_state->tlssc_restore            ? "true" : "false"; j += ',';
     j += "\"auto_wake\":";     j += g_state->auto_activate_on_wake    ? "true" : "false"; j += ',';
     j += "\"chime\":";         j += g_state->suppress_speed_chime     ? "true" : "false"; j += ',';
@@ -455,6 +574,35 @@ static String build_json() {
     j += "\"uptime_s\":";      j += uptime_s;                          j += ',';
     j += "\"fw_build\":\"";    j += __DATE__;  j += ' '; j += __TIME__; j += "\",";
     j += "\"can_dump\":";      j += can_dump_active()                 ? "true" : "false"; j += ',';
+    j += "\"bms_enabled\":";   j += g_state->bms_enabled               ? "true" : "false"; j += ',';
+    j += "\"bms_seen\":";      j += g_state->bms_seen                  ? "true" : "false"; j += ',';
+    j += "\"bms_voltage\":";   snprintf(fps_s, sizeof(fps_s), "%.2f", g_state->pack_voltage_v); j += fps_s; j += ',';
+    j += "\"bms_current\":";   snprintf(fps_s, sizeof(fps_s), "%.2f", g_state->pack_current_a); j += fps_s; j += ',';
+    j += "\"bms_soc\":";       snprintf(fps_s, sizeof(fps_s), "%.1f", g_state->soc_percent); j += fps_s; j += ',';
+    j += "\"bms_temp_min\":";  j += (int)g_state->batt_temp_min_c;      j += ',';
+    j += "\"bms_temp_max\":";  j += (int)g_state->batt_temp_max_c;      j += ',';
+    j += "\"bms_hv_seen\":";   j += g_state->seen_bms_hv;              j += ',';
+    j += "\"bms_soc_seen\":";  j += g_state->seen_bms_soc;             j += ',';
+    j += "\"bms_thermal_seen\":"; j += g_state->seen_bms_thermal;      j += ',';
+    j += "\"ban_shield\":";       j += g_state->ban_shield               ? "true" : "false"; j += ',';
+    j += "\"ban_shield_armed\":"; j += g_state->ban_shield_armed          ? "true" : "false"; j += ',';
+    j += "\"ban_shield_blocks\":"; j += g_state->ban_shield_blocks;                           j += ',';
+    j += "\"wifi_ssid\":\"";
+    String ap_ssid = String(wifi_ap_ssid());
+    for (size_t i = 0; i < ap_ssid.length(); i++) {
+        char c = ap_ssid[i];
+        if (c == '"' || c == '\\') j += '\\';
+        j += c;
+    }
+    j += "\",";
+    j += "\"wifi_pass\":\"";
+    String ap_pass = String(wifi_ap_pass());
+    for (size_t i = 0; i < ap_pass.length(); i++) {
+        char c = ap_pass[i];
+        if (c == '"' || c == '\\') j += '\\';
+        j += c;
+    }
+    j += "\",";
     j += "\"wifi_clients\":";  j += (int)WiFi.softAPgetStationNum();
     j += '}';
     return j;
@@ -480,15 +628,14 @@ static void ws_event(uint8_t num, WStype_t type,
     memcpy(buf, payload, n);
 
     if (strstr(buf, "\"mode\"")) {
-        if (g_state->op_mode == OpMode_ListenOnly) {
-            g_state->op_mode = OpMode_Active;
-            if (g_can) g_can->setListenOnly(false);
-            Serial.println("[Web] \u2192 Active mode");
-        } else {
-            g_state->op_mode = OpMode_ListenOnly;
-            if (g_can) g_can->setListenOnly(true);
-            Serial.println("[Web] \u2192 Listen-Only mode");
-        }
+        bool want = (strstr(buf, "true") != nullptr);
+        g_state->op_mode = want ? OpMode_Active : OpMode_ListenOnly;
+        if (g_can) g_can->setListenOnly(!want);
+        Serial.printf("[Web] \u2192 %s\n", want ? "TX Mode" : "Listen-Only");
+    } else if (strstr(buf, "\"fsd_inject\"")) {
+        g_state->fsd_inject_enabled = (strstr(buf, "true") != nullptr);
+        Serial.printf("[Web] FSD Inject: %s\n", g_state->fsd_inject_enabled ? "ON" : "OFF");
+        nvs_settings_save(g_state);
     } else if (strstr(buf, "\"nag\"")) {
         g_state->nag_killer = (strstr(buf, "true") != nullptr);
         Serial.printf("[Web] NAG Killer: %s\n", g_state->nag_killer ? "ON" : "OFF");
@@ -518,6 +665,32 @@ static void ws_event(uint8_t num, WStype_t type,
       if (want) can_dump_start();
       else      can_dump_stop();
       Serial.printf("[Web] CAN Dump: %s\n", want ? "START" : "STOP");
+    } else if (strstr(buf, "\"bms_enable\"")) {
+        g_state->bms_enabled = (strstr(buf, "true") != nullptr);
+        if (!g_state->bms_enabled) {
+            g_state->bms_seen = false;
+            g_state->pack_voltage_v = 0.0f;
+            g_state->pack_current_a = 0.0f;
+            g_state->soc_percent = 0.0f;
+            g_state->batt_temp_min_c = 0;
+            g_state->batt_temp_max_c = 0;
+        }
+        Serial.printf("[Web] BMS: %s\n", g_state->bms_enabled ? "Enabled" : "Disabled");
+        nvs_settings_save(g_state);
+    } else if (strstr(buf, "\"ban_shield\"")) {
+        g_state->ban_shield = (strstr(buf, "true") != nullptr);
+        if (!g_state->ban_shield) {
+            g_state->ban_shield_armed = false;
+            g_state->ban_shield_blocks = 0;
+            memset(g_state->ban_shield_snapshot_valid, 0, sizeof(g_state->ban_shield_snapshot_valid));
+        }
+        Serial.printf("[Web] BAN Shield: %s\n", g_state->ban_shield ? "Enabled" : "Disabled");
+        nvs_settings_save(g_state);
+        } else if (strstr(buf, "\"dump\"")) {
+          bool want = (strstr(buf, "true") != nullptr);
+          if (want) can_dump_start();
+          else      can_dump_stop();
+          Serial.printf("[Web] CAN Dump: %s\n", want ? "START" : "STOP");
     }
 }
 
@@ -536,6 +709,49 @@ static void handle_sdformat() {
     g_http.send(200, "application/json", result);
 }
 
+static void handle_reboot() {
+    g_http.send(200, "text/plain", "Rebooting...");
+    g_http.client().flush();
+    delay(200);
+    ESP.restart();
+}
+
+static String extract_json_str(const String &body, const char *key) {
+    String needle = String("\"") + key + "\":\"";
+    int idx = body.indexOf(needle);
+    if (idx < 0) return "";
+    int start = idx + needle.length();
+    int end   = body.indexOf('"', start);
+    if (end < 0) return "";
+    return body.substring(start, end);
+}
+
+static void handle_wificreds() {
+    if (g_http.method() == HTTP_GET) {
+        // Return current SSID only (never expose password)
+        String j = "{\"ssid\":\""; j += wifi_ap_ssid(); j += "\"}";
+        g_http.send(200, "application/json", j);
+        return;
+    }
+    // POST — save new credentials
+    String body = g_http.arg("plain");
+    String ssid = extract_json_str(body, "ssid");
+    String pass = extract_json_str(body, "pass");
+    if (ssid.length() < 1 || ssid.length() > 32) {
+        g_http.send(400, "application/json",
+            "{\"ok\":false,\"msg\":\"Invalid SSID (1-32 chars)\"}" );
+        return;
+    }
+    if (pass.length() > 0 && pass.length() < 8) {
+        g_http.send(400, "application/json",
+            "{\"ok\":false,\"msg\":\"Password too short (min 8)\"}" );
+        return;
+    }
+    nvs_wifi_save(ssid.c_str(), pass.c_str());
+    g_http.send(200, "application/json",
+        "{\"ok\":true,\"msg\":\"Saved \\u2014 reboot to apply\"}" );
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 void web_dashboard_init(FSDState *state, CanDriver *can) {
     g_state       = state;
@@ -545,9 +761,12 @@ void web_dashboard_init(FSDState *state, CanDriver *can) {
     g_last_rx     = state ? state->rx_count : 0;
     g_last_can_seen_ms = (state && state->rx_count > 0) ? millis() : 0;
 
-    g_http.on("/",           HTTP_GET, handle_root);
-    g_http.on("/api/status", HTTP_GET, handle_status);
-    g_http.on("/sdformat",   HTTP_GET, handle_sdformat);
+    g_http.on("/",           HTTP_GET,  handle_root);
+    g_http.on("/api/status", HTTP_GET,  handle_status);
+    g_http.on("/sdformat",   HTTP_GET,  handle_sdformat);
+    g_http.on("/reboot",     HTTP_GET,  handle_reboot);
+    g_http.on("/wificreds",  HTTP_GET,  handle_wificreds);
+    g_http.on("/wificreds",  HTTP_POST, handle_wificreds);
     g_http.begin();
 
     g_ws.begin();

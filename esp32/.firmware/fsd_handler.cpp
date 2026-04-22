@@ -51,6 +51,9 @@ void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
     state->suppress_speed_chime = true;
     state->emergency_vehicle_detect = false;
     state->force_fsd            = false;
+    state->fsd_inject_enabled   = true;
+    state->ban_shield           = true;
+    state->ban_shield_armed     = false;
 
     // Default speed profile per HW version
     if (hw == TeslaHW_HW4)
@@ -151,6 +154,9 @@ bool fsd_handle_autopilot_frame(FSDState *state, CanFrame *frame) {
     // mux 0 is the authoritative "is FSD requested" mux
     if (mux == 0) state->fsd_enabled = fsd_ui;
 
+    // If FSD injection is disabled, don't modify the frame
+    if (!state->fsd_inject_enabled) return false;
+
     if (state->hw_version == TeslaHW_HW3) {
         // ── HW3 ──────────────────────────────────────────────────────────────
         if (mux == 0 && state->fsd_enabled) {
@@ -206,7 +212,6 @@ bool fsd_handle_autopilot_frame(FSDState *state, CanFrame *frame) {
         }
     }
 
-    if (modified) state->frames_modified++;
     return modified;
 }
 
@@ -234,6 +239,9 @@ bool fsd_handle_legacy_autopilot(FSDState *state, CanFrame *frame) {
 
     if (mux == 0) state->fsd_enabled = fsd_ui;
 
+    // If FSD injection is disabled, don't modify the frame
+    if (!state->fsd_inject_enabled) return false;
+
     if (mux == 0 && state->fsd_enabled) {
         set_bit(frame, 46, true);
         // Speed profile in bits 2:1 of byte 6 (same encoding as HW3)
@@ -247,7 +255,6 @@ bool fsd_handle_legacy_autopilot(FSDState *state, CanFrame *frame) {
         modified = true;
     }
 
-    if (modified) state->frames_modified++;
     return modified;
 }
 
@@ -329,4 +336,82 @@ bool fsd_handle_tlssc_restore(FSDState *state, CanFrame *frame) {
     frame->data[0] = modified;
     state->tlssc_restore_count++;
     return true;
+}
+
+// ── 0x7FF BAN Shield (GTW_carConfig_ETH) ───────────────────────────────────
+
+bool fsd_handle_ban_shield(FSDState *state, CanFrame *frame) {
+    if (!state->ban_shield) return false;
+    if (frame->dlc < 8) return false;
+
+    uint8_t mux = frame->data[0] & 0x07u;
+
+    // Learning phase: capture healthy snapshot for each mux.
+    if (!state->ban_shield_armed) {
+        if (!state->ban_shield_snapshot_valid[mux]) {
+            for (int i = 0; i < 8; i++)
+                state->ban_shield_snapshot[mux][i] = frame->data[i];
+            state->ban_shield_snapshot_valid[mux] = true;
+        }
+
+        bool all_mux_seen = true;
+        for (int i = 0; i < 8; i++) {
+            if (!state->ban_shield_snapshot_valid[i]) {
+                all_mux_seen = false;
+                break;
+            }
+        }
+        if (all_mux_seen) state->ban_shield_armed = true;
+        return false;
+    }
+
+    // Armed phase: overwrite any changed frame with the learned snapshot.
+    if (!state->ban_shield_snapshot_valid[mux]) return false;
+
+    bool changed = false;
+    for (int i = 0; i < 8; i++) {
+        if (frame->data[i] != state->ban_shield_snapshot[mux][i]) {
+            changed = true;
+            break;
+        }
+    }
+    if (!changed) return false;
+
+    for (int i = 0; i < 8; i++)
+        frame->data[i] = state->ban_shield_snapshot[mux][i];
+
+    state->ban_shield_blocks++;
+    return true;
+}
+
+// ── BMS read-only parsers (only active when bms_enabled=true) ──────────────────
+
+void fsd_handle_bms_hv(FSDState *state, const CanFrame *frame) {
+    if (!state->bms_enabled) return;
+    if (frame->dlc < 4) return;
+    // Voltage: uint16 little-endian bytes 1:0, LSB = 0.01 V
+    uint16_t raw_v = ((uint16_t)frame->data[1] << 8) | frame->data[0];
+    // Current: int16 little-endian bytes 3:2, LSB = 0.1 A (signed)
+    int16_t  raw_i = (int16_t)(((uint16_t)frame->data[3] << 8) | frame->data[2]);
+    state->pack_voltage_v = raw_v * 0.01f;
+    state->pack_current_a = raw_i * 0.1f;
+    state->bms_seen = true;
+}
+
+void fsd_handle_bms_soc(FSDState *state, const CanFrame *frame) {
+    if (!state->bms_enabled) return;
+    if (frame->dlc < 2) return;
+    // SoC: 10-bit little-endian (bits 9:0 across bytes 1:0), LSB = 0.1 %
+    uint16_t raw = ((uint16_t)(frame->data[1] & 0x03u) << 8) | frame->data[0];
+    state->soc_percent = raw * 0.1f;
+    state->bms_seen = true;
+}
+
+void fsd_handle_bms_thermal(FSDState *state, const CanFrame *frame) {
+    if (!state->bms_enabled) return;
+    if (frame->dlc < 6) return;
+    // Temperatures: raw byte − 40 = °C
+    state->batt_temp_min_c = (int8_t)((int)frame->data[4] - 40);
+    state->batt_temp_max_c = (int8_t)((int)frame->data[5] - 40);
+    state->bms_seen = true;
 }

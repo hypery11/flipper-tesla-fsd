@@ -33,6 +33,7 @@ All CAN protocol handling from hypery11's Flipper Zero implementation (`fsd_hand
 - TLSSC Restore via DAS config spoof (`0x331`)
 - CRC/checksum recalculation after frame modification
 - DLC length validation on all handlers
+- **BAN Shield** (`0x7FF` GTW_carConfig_ETH) — snapshot-based ban-push blocker (⚠️ untested on vehicle)
 
 ### What Was Added (New)
 
@@ -40,13 +41,14 @@ All CAN protocol handling from hypery11's Flipper Zero implementation (`fsd_hand
 
 - **WiFi AP mode** — connects without internet, SSID: `Tesla-FSD`, password: `12345678`
 - **Tesla dark theme UI** — mobile-first responsive design (optimized for phone in portrait)
-  - Tabbed interface: Dashboard, Controls, CAN Bus, Device
+  - Tabbed interface: **Dashboard, Controls, CAN Bus, BMS, Device** (5 tabs)
   - Dark background (#0a0a1a) with accent gradients, inspired by Tesla's in-car UI
   - All HTML/CSS/JS embedded in firmware (no external CDN dependencies)
 - **Real-time WebSocket push** — 1 Hz state updates via WebSocket on port 81
 - **Dashboard tab** — FSD status, operation mode, HW version, vehicle detection
 - **Controls tab** — Toggle switches for all features + mode activation button
 - **CAN Bus tab** — RX frame count, TX modified count, CRC errors, frames/second, NAG echo and TLSSC restore counters
+- **BMS tab** ⚠️ — Battery data (voltage, current, SoC, temps) with enable/disable toggle — **NOT YET TESTED**
 - **Device tab** — firmware build date, uptime counter, WiFi client count, speed profile
 - **OTA Warning Banner** — pulsing red alert when vehicle OTA update is detected (installing only)
 - **Sleep Banner** — purple alert when car is asleep (no CAN traffic)
@@ -65,22 +67,32 @@ Dual CAN driver support (compile-time switch):
 
 ## Features
 
-| Feature | CAN ID | HW Compat | Description |
-|---------|--------|-----------|-------------|
-| **FSD Unlock** | `0x3FD` mux0 | All (Legacy/HW3/HW4) | bit46 = 1 activates FSD |
-| **NAG Killer** | `0x370` | All | Suppresses hands-on-wheel reminder via counter+1 echo |
-| **Force FSD** | `0x3FD` mux0 | All | Bypass UI selection check — FSD always active |
-| **Speed Profile** | `0x3FD` mux2 | All | Follow-distance stalk maps to speed offset |
-| **TLSSC Restore** | `0x331` | All | DAS config spoof — restores tier via autopilot config |
-| **ISA Chime Suppress** | `0x399` | **HW4 only** | Kills speed warning chime |
-| **Emergency Vehicle Detect** | `0x3FD` mux0 bit59 | **HW4 only** | Enables emergency vehicle detection bit |
-| **OTA Protection** | `0x318` | All | Auto-stops TX when OTA *installing* detected |
-| **Car Sleep / Wake** | — | All | Detects car sleep (no CAN), auto-resumes on wake |
-| **Auto-Activate on Wake** | — | All | Automatically switches to Active mode on wake / boot |
-| **HW Auto-Detect** | `0x398` | All | Reads GTW_carConfig with fallback detection |
-| **Listen-Only Mode** | — | All | Default on boot, passive monitoring only |
-| **NVS Persistence** | — | All | Saves toggle settings to flash (survives reboot) |
-| **WiFi Dashboard** | — | All | Real-time web UI at 192.168.4.1 |
+> [!WARNING]
+> Three features listed below are **implemented but NOT yet tested on a real vehicle**. Enable them only if you're willing to experiment and report results.
+> - **Force FSD** — bypass UI selection check so FSD is always active
+> - **BAN Shield** — blocks server-side ban pushes via `0x7FF` snapshot overwrite
+> - **BMS Monitor** — read-only battery data sniffing via `0x132` / `0x292` / `0x312`
+>
+> **Feedback welcome!** If you test any of these features on your vehicle, please open an issue or post in the PR thread with your results (vehicle model, HW version, firmware, observed behaviour). Your reports help validate and improve the implementation.
+
+| Feature | CAN ID | HW Compat | Status | Description |
+|---------|--------|-----------|--------|-------------|
+| **FSD Unlock** | `0x3FD` mux0 | All (Legacy/HW3/HW4) | ✅ Tested | bit46 = 1 activates FSD |
+| **NAG Killer** | `0x370` | All | ✅ Tested | Suppresses hands-on-wheel reminder via counter+1 echo |
+| **Force FSD** | `0x3FD` mux0 | All | ⚠️ **UNTESTED** | Bypass UI selection check — FSD always active |
+| **Speed Profile** | `0x3FD` mux2 | All | ✅ Tested | Follow-distance stalk maps to speed offset |
+| **TLSSC Restore** | `0x331` | All | ✅ Tested | DAS config spoof — restores tier via autopilot config |
+| **ISA Chime Suppress** | `0x399` | **HW4 only** | ✅ Tested | Kills speed warning chime |
+| **Emergency Vehicle Detect** | `0x3FD` mux0 bit59 | **HW4 only** | ✅ Tested | Enables emergency vehicle detection bit |
+| **OTA Protection** | `0x318` | All | ✅ Tested | Auto-stops TX when OTA *installing* detected |
+| **Car Sleep / Wake** | — | All | ✅ Tested | Detects car sleep (no CAN), auto-resumes on wake |
+| **Auto-Activate on Wake** | — | All | ✅ Tested | Automatically switches to Active mode on wake / boot |
+| **HW Auto-Detect** | `0x398` | All | ✅ Tested | Reads GTW_carConfig with fallback detection |
+| **Listen-Only Mode** | — | All | ✅ Tested | Default on boot, passive monitoring only |
+| **NVS Persistence** | — | All | ✅ Tested | Saves toggle settings to flash (survives reboot) |
+| **WiFi Dashboard** | — | All | ✅ Tested | Real-time web UI at 192.168.4.1 |
+| **BAN Shield** | `0x7FF` | All | ⚠️ **UNTESTED** | Snapshot-based blocker: overrides server ban-pushes on GTW_carConfig_ETH |
+| **BMS Monitor** | `0x132` `0x292` `0x312` | All | ⚠️ **UNTESTED** | Read-only: pack voltage, current, SoC %, min/max temps |
 
 ### Persisted Settings (NVS)
 
@@ -90,10 +102,12 @@ These settings are saved to flash and restored automatically on boot:
 |---------|---------|-------------|
 | NAG Killer | ON | Suppress hands-on-wheel nag |
 | Speed Chime Suppress | ON | ISA chime suppress (HW4 only) |
-| Force FSD | OFF | Bypass FSD UI selection check |
+| Force FSD | OFF | Bypass FSD UI selection check (⚠️ untested — feedback welcome) |
 | TLSSC Restore | OFF | DAS config spoof for tier restore |
 | Auto-Activate on Wake | OFF | Auto-switch to Active on boot/wake |
 | Emergency Vehicle Detect | OFF | Enable EVD bit (HW4 only) |
+| BAN Shield | **ON** | Block server-side ban pushes via 0x7FF snapshot (⚠️ untested — feedback welcome) |
+| BMS Monitor | OFF | Enable read-only battery data sniffing (⚠️ untested — feedback welcome) |
 
 ---
 
@@ -154,6 +168,9 @@ Located in the rear center console area:
 | CAN ID | Name | Purpose |
 |--------|------|---------|
 | `0x045` | STW_ACTN_RQ | Steering stalk (Legacy follow distance) |
+| `0x132` | BMS_HV_BUS | Pack voltage & current — BMS monitor ⚠️ untested |
+| `0x292` | BMS_SOC | State of charge — BMS monitor ⚠️ untested |
+| `0x312` | BMS_THERMAL | Battery temperatures — BMS monitor ⚠️ untested |
 | `0x318` | GTW_CAR_STATE | Vehicle state (OTA detection) |
 | `0x331` | DAS_AP_CONFIG | DAS autopilot config (TLSSC restore target) |
 | `0x370` | EPAS_STATUS | EPAS status (NAG killer target) |
@@ -162,6 +179,7 @@ Located in the rear center console area:
 | `0x3EE` | AP_LEGACY | Autopilot control (Legacy / HW1 / HW2) |
 | `0x3F8` | FOLLOW_DIST | Follow distance / speed profile |
 | `0x3FD` | AP_CONTROL | **Autopilot control (HW3/HW4) — core** |
+| `0x7FF` | GTW_CONFIG_ETH | GTW_carConfig_ETH — BAN Shield target ⚠️ untested |
 
 Bus speed: **500 kbps**
 
@@ -289,9 +307,11 @@ esp32/
 ├── .firmware/
 │   ├── main.cpp            — Init, button handling, CAN dispatch, main loop
 │   ├── fsd_handler.cpp/h   — CAN protocol logic (ported from hypery11)
+│   │                           incl. BAN Shield (0x7FF) and BMS parsers (0x132/292/312)
 │   ├── can_driver.cpp/h    — CAN driver abstraction (TWAI / MCP2515)
 │   ├── wifi_manager.cpp/h  — WiFi AP setup
 │   ├── web_dashboard.cpp/h — HTTP server + WebSocket + embedded UI
+│   │                           5 tabs: Dashboard / Controls / CAN Bus / BMS / Device
 │   ├── nvs_settings.cpp/h  — NVS persistence for toggle settings
 │   ├── led.cpp/h           — NeoPixel LED status control
 │   └── config.h            — CAN IDs, pin definitions, timing constants

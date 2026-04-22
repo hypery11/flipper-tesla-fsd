@@ -29,22 +29,26 @@ static FSDState   g_state = {};
 static void apply_detected_hw(TeslaHWVersion hw, const char *reason) {
     if (hw == TeslaHW_Unknown || g_state.hw_version == hw) return;
 
-    bool old_nag       = g_state.nag_killer;
-    bool old_chime     = g_state.suppress_speed_chime;
-    bool old_force     = g_state.force_fsd;
-    bool old_emerg     = g_state.emergency_vehicle_detect;
-    bool old_tlssc     = g_state.tlssc_restore;
-    bool old_auto_wake = g_state.auto_activate_on_wake;
-    OpMode old_mode    = g_state.op_mode;
+    bool old_nag        = g_state.nag_killer;
+    bool old_chime      = g_state.suppress_speed_chime;
+    bool old_force      = g_state.force_fsd;
+    bool old_emerg      = g_state.emergency_vehicle_detect;
+    bool old_tlssc      = g_state.tlssc_restore;
+    bool old_auto_wake  = g_state.auto_activate_on_wake;
+    bool old_fsd_inject = g_state.fsd_inject_enabled;
+    bool old_ban_shield = g_state.ban_shield;
+    OpMode old_mode     = g_state.op_mode;
 
     fsd_state_init(&g_state, hw);
-    g_state.nag_killer              = old_nag;
-    g_state.suppress_speed_chime    = old_chime;
-    g_state.force_fsd               = old_force;
+    g_state.nag_killer               = old_nag;
+    g_state.suppress_speed_chime     = old_chime;
+    g_state.force_fsd                = old_force;
     g_state.emergency_vehicle_detect = old_emerg;
-    g_state.tlssc_restore           = old_tlssc;
-    g_state.auto_activate_on_wake   = old_auto_wake;
-    g_state.op_mode                 = old_mode;
+    g_state.tlssc_restore            = old_tlssc;
+    g_state.auto_activate_on_wake    = old_auto_wake;
+    g_state.fsd_inject_enabled       = old_fsd_inject;
+    g_state.ban_shield               = old_ban_shield;
+    g_state.op_mode                  = old_mode;
 
     const char *hw_str =
         (hw == TeslaHW_HW4) ? "HW4" :
@@ -144,6 +148,10 @@ static void process_frame(const CanFrame &frame) {
     if (frame.id == CAN_ID_GTW_CAR_STATE)  g_state.seen_gtw_car_state++;
     if (frame.id == CAN_ID_GTW_CAR_CONFIG) g_state.seen_gtw_car_config++;
     if (frame.id == CAN_ID_AP_CONTROL)     g_state.seen_ap_control++;
+    if (frame.id == CAN_ID_BMS_HV_BUS)     g_state.seen_bms_hv++;
+    if (frame.id == CAN_ID_BMS_SOC)        g_state.seen_bms_soc++;
+    if (frame.id == CAN_ID_BMS_THERMAL)    g_state.seen_bms_thermal++;
+    if (frame.id == CAN_ID_GTW_CONFIG_ETH) g_state.seen_gtw_config_eth++;
 
     // DLC sanity: skip zero-length frames
     if (frame.dlc == 0) return;
@@ -183,6 +191,22 @@ static void process_frame(const CanFrame &frame) {
         return;
     }
 
+    // ── BMS sniff (read-only, active when bms_enabled=true) ────────────────────
+    if (frame.id == CAN_ID_BMS_HV_BUS)  { fsd_handle_bms_hv(&g_state, &frame);      return; }
+    if (frame.id == CAN_ID_BMS_SOC)     { fsd_handle_bms_soc(&g_state, &frame);     return; }
+    if (frame.id == CAN_ID_BMS_THERMAL) { fsd_handle_bms_thermal(&g_state, &frame); return; }
+
+    // ── BAN Shield (0x7FF): always learn snapshots; retransmit corrected frames in TX mode ──
+    if (frame.id == CAN_ID_GTW_CONFIG_ETH) {
+        CanFrame f = frame;
+        bool modified = fsd_handle_ban_shield(&g_state, &f);
+        if (modified && fsd_can_transmit(&g_state)) {
+            g_can->send(f);
+            can_dump_log("BAN 0x7FF mux=%u corrected and retransmitted", (unsigned)(f.data[0] & 0x07u));
+        }
+        return;
+    }
+
     // ── Beyond here only run when TX is allowed ───────────────────────────────
     bool tx = fsd_can_transmit(&g_state);
 
@@ -210,8 +234,10 @@ static void process_frame(const CanFrame &frame) {
     // Legacy autopilot control (0x3EE)
     if (frame.id == CAN_ID_AP_LEGACY && g_state.hw_version == TeslaHW_Legacy) {
         CanFrame f = frame;
-        if (fsd_handle_legacy_autopilot(&g_state, &f) && tx)
+        if (fsd_handle_legacy_autopilot(&g_state, &f) && tx) {
             g_can->send(f);
+            g_state.frames_modified++;
+        }
         return;
     }
 
@@ -262,8 +288,10 @@ static void process_frame(const CanFrame &frame) {
     // HW3/HW4 autopilot control (0x3FD) — main FSD activation frame
     if (frame.id == CAN_ID_AP_CONTROL) {
         CanFrame f = frame;
-        if (fsd_handle_autopilot_frame(&g_state, &f) && tx)
+        if (fsd_handle_autopilot_frame(&g_state, &f) && tx) {
             g_can->send(f);
+            g_state.frames_modified++;
+        }
         return;
     }
 }
