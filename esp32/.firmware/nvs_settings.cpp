@@ -31,6 +31,7 @@ void nvs_settings_load(FSDState *state) {
     state->auto_activate_on_wake    = prefs.getBool("auto_wake",  state->auto_activate_on_wake);
     state->emergency_vehicle_detect = prefs.getBool("emerg_veh",  state->emergency_vehicle_detect);
     state->ban_shield               = prefs.getBool("ban_shield", state->ban_shield);
+    state->bms_enabled              = prefs.getBool("bms_enable", state->bms_enabled);
 
     prefs.end();
 
@@ -55,6 +56,7 @@ void nvs_settings_save(const FSDState *state) {
     prefs.putBool("auto_wake",  state->auto_activate_on_wake);
     prefs.putBool("emerg_veh",  state->emergency_vehicle_detect);
     prefs.putBool("ban_shield", state->ban_shield);
+    prefs.putBool("bms_enable", state->bms_enabled);
 
     prefs.end();
 }

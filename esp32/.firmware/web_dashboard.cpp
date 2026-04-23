@@ -597,11 +597,7 @@ static String build_json() {
     j += "\",";
     j += "\"wifi_pass\":\"";
     String ap_pass = String(wifi_ap_pass());
-    for (size_t i = 0; i < ap_pass.length(); i++) {
-        char c = ap_pass[i];
-        if (c == '"' || c == '\\') j += '\\';
-        j += c;
-    }
+    j += (ap_pass.length() > 0) ? "***" : "";
     j += "\",";
     j += "\"wifi_clients\":";  j += (int)WiFi.softAPgetStationNum();
     j += '}';
@@ -686,11 +682,6 @@ static void ws_event(uint8_t num, WStype_t type,
         }
         Serial.printf("[Web] BAN Shield: %s\n", g_state->ban_shield ? "Enabled" : "Disabled");
         nvs_settings_save(g_state);
-        } else if (strstr(buf, "\"dump\"")) {
-          bool want = (strstr(buf, "true") != nullptr);
-          if (want) can_dump_start();
-          else      can_dump_stop();
-          Serial.printf("[Web] CAN Dump: %s\n", want ? "START" : "STOP");
     }
 }
 

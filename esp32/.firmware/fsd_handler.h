@@ -69,7 +69,6 @@ struct FSDState {
 
     // ── BMS read-only sniff (enabled when bms_enabled=true) ────────────────
     bool           bms_enabled;       // read/display BMS data when true
-    bool           bms_output;        // print BMS data to serial (debug)
     bool           bms_seen;
     float          pack_voltage_v;
     float          pack_current_a;
@@ -146,3 +145,9 @@ void fsd_handle_bms_soc(FSDState *state, const CanFrame *frame);
 
 /** Parse BMS_thermalStatus (0x312) — updates batt_temp_min/max_c. */
 void fsd_handle_bms_thermal(FSDState *state, const CanFrame *frame);
+
+// NOTE: fsd_build_precondition_frame() (0x082 UI_tripPlanning) is intentionally
+// absent from this ESP32 port.  0x082 is a Party CAN frame and is not present
+// on the Autopilot CAN bus that this device taps.  Sending it would have no
+// effect and would add unnecessary TX traffic.  The Flipper Zero implementation
+// retains it because the Flipper connects to a different bus topology.

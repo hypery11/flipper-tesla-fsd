@@ -60,9 +60,9 @@
 // OTA detection hardening on GTW_carState (0x318)
 // GTW_updateInProgress bits [1:0] of byte 6:
 //   0 = No update, 1 = Update available, 2 = Installing, 3 = Scheduled
-// Only value 2 (installing) should suspend TX.  Value 1 just means an update
-// is available but NOT actively being installed — ignore it.
-#define OTA_IN_PROGRESS_RAW_VALUE  2u
+// Only value 1 (update available) should suspend TX to be conservative.
+// Value 2 is more permissive but requires vehicle validation.
+#define OTA_IN_PROGRESS_RAW_VALUE  1u
 #define OTA_ASSERT_FRAMES         10u
 #define OTA_CLEAR_FRAMES           6u
 
