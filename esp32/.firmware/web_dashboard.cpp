@@ -469,6 +469,17 @@ conn();
 </html>
 )rawliteral";
 
+// ── JSON helpers ──────────────────────────────────────────────────────────────
+static String json_escape(const char *s) {
+    String out;
+    for (; *s; ++s) {
+        if (*s == '"')       out += "\\\"";
+        else if (*s == '\\') out += "\\\\";
+        else                 out += *s;
+    }
+    return out;
+}
+
 // ── JSON builder ──────────────────────────────────────────────────────────────
 static String build_json() {
     uint32_t uptime_s = (millis() - g_start_ms) / 1000;
@@ -520,8 +531,8 @@ static String build_json() {
     j += "\"fw_build\":\"";    j += __DATE__;  j += ' '; j += __TIME__; j += "\",";
     j += "\"can_dump\":";      j += can_dump_active()                 ? "true" : "false"; j += ',';
     j += "\"sleep_ms\":";     j += g_state->sleep_idle_ms;            j += ',';
-    j += "\"wifi_ssid\":\"";  j += g_state->wifi_ssid;                j += "\",";
-    j += "\"wifi_pass\":\"";  j += g_state->wifi_pass;                j += "\",";
+    j += "\"wifi_ssid\":\"";  j += json_escape(g_state->wifi_ssid);   j += "\",";
+    j += "\"wifi_pass\":\"***\",";
     j += "\"wifi_hidden\":";  j += g_state->wifi_hidden               ? "true" : "false"; j += ',';
     j += "\"wifi_clients\":";  j += (int)WiFi.softAPgetStationNum();
     j += '}';
@@ -620,8 +631,10 @@ static void ws_event(uint8_t num, WStype_t type,
                 if (end) {
                     int len = end - s;
                     if (len > 32) len = 32;
-                    memcpy(g_state->wifi_ssid, s, len);
-                    g_state->wifi_ssid[len] = '\0';
+                    if (memchr(s, '\\', len) == nullptr) {
+                        memcpy(g_state->wifi_ssid, s, len);
+                        g_state->wifi_ssid[len] = '\0';
+                    }
                 }
             }
             if (p) {
@@ -630,8 +643,10 @@ static void ws_event(uint8_t num, WStype_t type,
                 if (end) {
                     int len = end - p;
                     if (len > 64) len = 64;
-                    memcpy(g_state->wifi_pass, p, len);
-                    g_state->wifi_pass[len] = '\0';
+                    if (memchr(p, '\\', len) == nullptr) {
+                        memcpy(g_state->wifi_pass, p, len);
+                        g_state->wifi_pass[len] = '\0';
+                    }
                 }
             }
             if (h) {
@@ -640,8 +655,8 @@ static void ws_event(uint8_t num, WStype_t type,
                 if (strncmp(h, "true", 4) == 0) g_state->wifi_hidden = true;
                 else if (strncmp(h, "false", 5) == 0) g_state->wifi_hidden = false;
             }
-            Serial.printf("[Web] WiFi config: SSID=\"%s\" PASS=\"%s\" HIDDEN=%d\n",
-                g_state->wifi_ssid, g_state->wifi_pass, g_state->wifi_hidden);
+            Serial.printf("[Web] WiFi config: SSID=\"%s\" PASS=*** HIDDEN=%d\n",
+                g_state->wifi_ssid, g_state->wifi_hidden);
             prefs_save(g_state);
             delay(500);
             ESP.restart();

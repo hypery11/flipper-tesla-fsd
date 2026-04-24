@@ -292,7 +292,6 @@ static void sleep_tick(uint32_t now) {
     if (idle_ms >= g_state.sleep_idle_ms) {
         Serial.printf("[SLEEP] Entering deep sleep after %lu ms CAN silence\n",
                       (unsigned long)idle_ms);
-        sd_syslog("SLEEP entering deep sleep — %lu ms CAN silence", (unsigned long)idle_ms);
         can_dump_stop();
         sd_syslog_close();
         led_set(LED_SLEEP);
@@ -304,8 +303,6 @@ static void sleep_tick(uint32_t now) {
         uint32_t remaining_ms = g_state.sleep_idle_ms - idle_ms;
         Serial.printf("[SLEEP] Warning: %lu ms idle, sleeping in %lu ms\n",
                       (unsigned long)idle_ms, (unsigned long)remaining_ms);
-        sd_syslog("SLEEP warning — %lu ms idle, sleeping in %lu ms",
-                  (unsigned long)idle_ms, (unsigned long)remaining_ms);
     }
 }
 #endif
@@ -366,7 +363,7 @@ void setup() {
         esp_sleep_wakeup_cause_t wakeup = esp_sleep_get_wakeup_cause();
         g_factory_reset_window = (wakeup == ESP_SLEEP_WAKEUP_UNDEFINED);
         if (g_factory_reset_window)
-            Serial.println("[BTN] Factory reset window active — hold button 10s within 20s");
+            Serial.println("[BTN] Factory reset window active — hold button 5s within 20s");
     }
 
     if (g_state.op_mode == OpMode_Active) {
@@ -383,10 +380,8 @@ void setup() {
         esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
         if (cause == ESP_SLEEP_WAKEUP_EXT0) {
             Serial.printf("[WAKE] Woken by CAN activity (EXT0 GPIO %d)\n", PIN_CAN_RX);
-            sd_syslog("WAKE woken by CAN activity (EXT0 GPIO %d)", PIN_CAN_RX);
         } else if (cause != ESP_SLEEP_WAKEUP_UNDEFINED) {
             Serial.printf("[WAKE] Wakeup cause=%d\n", (int)cause);
-            sd_syslog("WAKE cause=%d", (int)cause);
         }
         g_last_can_rx_ms = millis();
     }
