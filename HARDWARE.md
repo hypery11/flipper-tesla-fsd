@@ -6,6 +6,7 @@
 |--------|------|------------|-----------|------|----------|
 | **Any ESP32 + MCP2515 → X179** | **~$5-7** | X179 4-wire | 1 (bus 6 = mixed) | Yes | Cheapest full-feature setup |
 | M5Stack ATOM Lite + ATOMIC CAN → X179 | ~$13-15 | X179 4-wire | 1 (bus 6) | Yes | Plug & play, no soldering |
+| M5Stack ATOM Matrix + ATOMIC CAN → X179 | ~$22-25 | X179 4-wire | 1 (bus 6) | Yes | 5×5 LED status, timer-poll deep sleep |
 | **LILYGO T-2CAN ESP32-S3** → X179 | **~$24** | X179 4-wire (+ spare CAN2) | **2 independent** | Yes | Future-proof, dual-CAN ready |
 | **LILYGO T-CAN485** → X179 | **~$15** | X179 4-wire | 1 (SN65HVD230) | Yes | SD card CAN dump, tested on Model X/S |
 | Waveshare ESP32-S3-RS485-CAN → X179 | ~$18 | X179 4-wire | 1 (TWAI) | Yes | All-in-one board |
@@ -141,6 +142,29 @@ X179 Pin 14 → CAN-L ──┤── CAN module (MCP2515 / TWAI)
 X179 Pin 15 → 12V ────┤── buck converter → 3.3V/5V
 X179 Pin 20 → GND ────┘   (26-pin: use Pin 26 for GND)
 ```
+
+### enhauto Commander harness — Chassis CAN at the passenger footwell
+
+A separate viable install path for owners of the enhauto Commander cable
+who want to repurpose the harness with our firmware. The cable exposes
+two CAN pairs labeled **Chassis CAN H/L** and **Vehicle CAN H/L**.
+
+- **Chassis CAN** carries the autopilot control frames (`0x3FD`),
+  steering (`0x129`), DAS_status / DAS_autopilot (`0x331`), DI_speed
+  (`0x257`), DI_torque (`0x108`) — i.e. enough for FSD activation,
+  HW detection (with override — see PR notes), and most diagnostics.
+- **Vehicle CAN** does not carry the AP frames; HW auto-detect won't
+  fire on this bus. Use Chassis CAN instead.
+
+Confirmed limitations on Chassis CAN (2026.8.3 EU HW3):
+- `0x398` GTW_carConfig is not on this tap → use the dashboard's
+  HW Override dropdown to pin HW3 manually
+- `0x132` / `0x292` / `0x312` BMS frames are not broadcast on this
+  bus → battery dashboard stays empty (the enhauto Commander itself
+  reads them via UDS query/response, which our passive listener
+  doesn't implement)
+- `0x39B` DAS_status is not broadcast (only `0x39D` is, which carries
+  different fields)
 
 ---
 

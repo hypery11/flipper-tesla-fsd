@@ -15,6 +15,25 @@
 #define CAN_ID_DAS_AP_CONFIG  0x331u  // 817  - DAS autopilot config (tier restore target, ~1 Hz)
 #define CAN_ID_AP_CONTROL     0x3FDu  // 1021 - DAS_autopilotControl: HW3 / HW4 core
 #define CAN_ID_DAS_STATUS     0x39Bu  // 923  - DAS_status: AP hands-on state (nag gating)
+#define CAN_ID_DI_SPEED       0x257u  // 599  - DI_speed: vehicle speed
+#define CAN_ID_ESP_STATUS     0x145u  // 325  - ESP_status: brake apply, stability (Party CAN)
+#define CAN_ID_BATT_STATUS    0x420u  // 1056 - Empirically (2026.8.3 EU HW3 on Chassis CAN):
+                                      //         byte 2 = SoC %  (verified at 64%)
+                                      //         Identified on Chassis CAN where the standard
+                                      //         0x132/0x292/0x312 BMS frames aren't broadcast.
+                                      //         byte 0 and 3 hold stable values whose meaning
+                                      //         is unconfirmed.
+#define CAN_ID_BATT_TEMP      0x239u  // 569  - Empirically (Chassis CAN, low-rate, ~1 Hz):
+                                      //         byte 5 × 0.5 − 40 = battery temperature °C
+                                      //         (verified at 22.5°C reported vs cluster 21.8°C —
+                                      //         matches standard Tesla temp encoding).
+#define CAN_ID_DC_BUS         0x2B5u  // 693  - Empirically (2026.8.3 EU HW3 on Chassis CAN):
+                                      //         bytes 0-1 LE × 0.01 = LV (12V) bus voltage
+                                      //         bytes 2-3 LE × 0.1  = HV pack voltage
+                                      //         byte 4    × 0.1     = LV bus current (A)
+                                      //         Verified against enhauto Commander readouts.
+#define CAN_ID_DI_TORQUE      0x108u  // 264  - DI_torque: drive motor torque
+#define CAN_ID_STEER_ANGLE    0x129u  // 297  - SCCM_steeringAngleSensor
 
 // ── GPIO ──────────────────────────────────────────────────────────────────────
 #if defined(BOARD_LILYGO)
@@ -75,10 +94,28 @@
   #define ME2107_EN 16
 #endif
 
-// ── Deep sleep (BOARD_LILYGO only) ───────────────────────────────────────────
-// SN65HVD230 RXD (= PIN_CAN_RX, GPIO 26) is an RTC-capable GPIO on ESP32.
-// When the CAN bus goes dominant the pin goes LOW — used as ext0 wakeup source.
-// The SN65HVD230 Rs pin has an internal 100 kΩ pull-down, so it stays in
-// normal-receive mode when GPIO 23 floats during deep sleep.
-#define SLEEP_IDLE_MS   120000u   // CAN silence before entering deep sleep
-#define SLEEP_WARN_MS    5000u   // serial/log warning this many ms before sleep
+// ── Deep sleep ────────────────────────────────────────────────────────────────
+// Two strategies, selected per board:
+//   SLEEP_STRATEGY_EXT0  — wake on CAN_RX edge. Needs PIN_CAN_RX on an
+//                          RTC-capable GPIO. LilyGO's GPIO 26 qualifies; the
+//                          SN65HVD230 Rs pin has an internal 100 kΩ pull-down
+//                          so the transceiver stays in normal-receive mode
+//                          while GPIO 23 floats during deep sleep.
+//   SLEEP_STRATEGY_TIMER — wake periodically and listen briefly for CAN
+//                          traffic. Works on any board. Used by M5Stack ATOM
+//                          variants whose ATOMIC CAN Base routes RX to GPIO 19
+//                          (not RTC-capable, so EXT0 is unavailable).
+// Both ATOM Lite and ATOM Matrix share the ATOMIC CAN Base wiring (RX on
+// GPIO 19, not RTC-capable), so neither can use EXT0-on-CAN_RX. Both opt
+// into the timer-poll strategy. To disable sleep on a permanently-powered
+// dev setup, raise sleep_idle_ms via the web dashboard (max 3600 s).
+#if defined(BOARD_LILYGO)
+  #define SLEEP_STRATEGY_EXT0 1
+#elif defined(BOARD_M5STACK_ATOM) || defined(BOARD_M5STACK_ATOM_MATRIX)
+  #define SLEEP_STRATEGY_TIMER 1
+#endif
+
+#define SLEEP_IDLE_MS          60000u   // CAN silence before entering deep sleep (runtime override via web UI)
+#define SLEEP_WARN_MS           5000u   // serial/log warning this many ms before sleep
+#define SLEEP_TIMER_WAKE_S        60u   // TIMER strategy: deep-sleep duration between probes
+#define SLEEP_PROBE_MS          5000u   // TIMER strategy: listen window for CAN after a timer wake

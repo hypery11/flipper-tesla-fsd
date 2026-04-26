@@ -221,6 +221,10 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
       <div><div class="hv" id="bCurr">--</div><div class="hl">Current</div></div>
       <div><div class="hv" id="bTemp">--</div><div class="hl">Temp</div></div>
     </div>
+    <div class="row" style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px;font-size:.85em">
+      <span class="lbl">12V bus</span>
+      <span id="lvBus">--</span>
+    </div>
   </div>
 </div>
 
@@ -232,6 +236,49 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <div class="sb"><div class="sv" id="txCnt">0</div><div class="sl">TX Modified</div></div>
     <div class="sb"><div class="sv" id="crcErr">0</div><div class="sl">CRC Errors</div></div>
     <div class="sb"><div class="sv" id="fps">0.0</div><div class="sl">Frames/s</div></div>
+  </div>
+  <div class="row" style="margin-top:8px;font-size:.85em;color:var(--text2)">
+    <span class="lbl">Frames seen</span>
+    <span id="seenIds">0x398:0 0x3FD:0 0x3F8:0 0x318:0</span>
+  </div>
+  <div class="row" style="font-size:.85em;color:var(--text2)">
+    <span class="lbl">Stalk → speed profile</span>
+    <span id="stalkVal">--</span>
+  </div>
+</div>
+
+<!-- Vehicle live diagnostics -->
+<div class="card">
+  <div class="card-head"><div class="icon ic-d">V</div><h2>Vehicle (live)</h2></div>
+  <div class="row"><span class="lbl">Speed</span><span id="vSpeed">--</span></div>
+  <div class="row"><span class="lbl">Steering</span><span id="vSteer">--</span></div>
+  <div class="row"><span class="lbl">Motor torque</span><span id="vTorque">--</span></div>
+  <div class="row"><span class="lbl">Brake pedal</span><span id="vBrake">--</span></div>
+  <div class="row" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px">
+    <span class="lbl">DAS_autopilot</span><span id="vDasAp">--</span>
+  </div>
+  <div class="row"><span class="lbl">DAS_autopilotBase</span><span id="vDasApBase">--</span></div>
+  <div class="row"><span class="lbl">Hands-on level</span><span id="vHands">--</span></div>
+  <div class="row"><span class="lbl">Lane change</span><span id="vLane">--</span></div>
+  <div class="row"><span class="lbl">Blind spot</span><span id="vBlind">--</span></div>
+  <div class="row"><span class="lbl">Forward coll. warn</span><span id="vFcw">--</span></div>
+  <div class="row"><span class="lbl">Vision speed limit</span><span id="vVisLim">--</span></div>
+</div>
+
+<!-- Raw frame inspector — shows last bytes for IDs whose bit positions can vary by firmware -->
+<div class="card">
+  <div class="card-head"><div class="icon ic-d">R</div><h2>Raw frames</h2></div>
+  <div class="row" style="font-family:monospace;font-size:.85em">
+    <span class="lbl">0x145 ESP</span><span id="raw145">--</span>
+  </div>
+  <div class="row" style="font-family:monospace;font-size:.85em">
+    <span class="lbl">0x39B DAS</span><span id="raw39b">--</span>
+  </div>
+  <div class="row" style="font-family:monospace;font-size:.85em">
+    <span class="lbl">0x129 STR</span><span id="raw129">--</span>
+  </div>
+  <div class="row" style="font-size:.75em;color:var(--text2);margin-top:6px">
+    <span style="white-space:normal">Watch which byte changes when you press brake (0x145) or turn the wheel (0x129) — that tells us the right bit position for this firmware.</span>
   </div>
 </div>
 
@@ -262,6 +309,31 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
   <div class="row">
     <span class="lbl">Deep Sleep (sec)</span>
     <input type="number" id="numSleep" min="10" max="3600" style="width:60px;background:var(--card2);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px;text-align:right" onchange="cmd('sleep',parseInt(this.value)*1000)">
+  </div>
+  <div class="row">
+    <span class="lbl">HW Override</span>
+    <select id="hwOv" style="background:var(--card2);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px" onchange="cmd('hw_override',parseInt(this.value))">
+      <option value="0">Auto-detect</option>
+      <option value="1">Legacy</option>
+      <option value="2">HW3</option>
+      <option value="3">HW4</option>
+    </select>
+  </div>
+  <div class="row">
+    <span class="lbl">Ignore OTA detect</span>
+    <label class="sw"><input type="checkbox" id="swOtaIg" onchange="cmd('ota_ignore',this.checked)"><span class="sl2"></span></label>
+  </div>
+  <div class="row">
+    <span class="lbl">CAN trace (serial)</span>
+    <label class="sw"><input type="checkbox" id="swTrace" onchange="cmd('can_trace',this.checked)"><span class="sl2"></span></label>
+  </div>
+  <div class="row" style="font-size:.8em;color:var(--text2)">
+    <span class="lbl">OTA raw value</span>
+    <span id="otaRaw">--</span>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button onclick="if(confirm('Reboot the device? WiFi will drop and reconnect in ~3 s.'))cmd('reboot',true)"
+            style="background:#3a1010;border:1px solid #5c1a1a;color:#ff8a8a;padding:6px 12px;border-radius:4px;cursor:pointer">Reboot device</button>
   </div>
 </div>
 
@@ -380,8 +452,17 @@ function upd(d){
   if(document.getElementById('swTlssc')) document.getElementById('swTlssc').checked=d.tlssc_restore;
   if(document.getElementById('swDump')) document.getElementById('swDump').checked=!!d.can_dump;
   
-  if(document.activeElement.id!=='numSleep' && document.getElementById('numSleep')) 
+  if(document.activeElement.id!=='numSleep' && document.getElementById('numSleep'))
     document.getElementById('numSleep').value=Math.floor((d.sleep_ms||0)/1000);
+  if(document.activeElement.id!=='hwOv' && document.getElementById('hwOv'))
+    document.getElementById('hwOv').value=String(d.hw_override||0);
+  if(document.getElementById('swOtaIg')) document.getElementById('swOtaIg').checked=!!d.ota_ignore;
+  if(document.getElementById('swTrace')) document.getElementById('swTrace').checked=!!d.can_trace;
+  if(document.getElementById('otaRaw')){
+    var rv=(d.ota_raw===undefined?'?':String(d.ota_raw));
+    var note=d.ota_ignore?' (detected, but ignored)':(d.ota?' (in progress)':' (idle)');
+    document.getElementById('otaRaw').textContent=rv+note;
+  }
   
   pill('dumpSt',d.can_dump,d.can_dump?'Recording':'Idle');
 
@@ -390,6 +471,31 @@ function upd(d){
   if(document.getElementById('txCnt')) document.getElementById('txCnt').textContent=(d.tx_count||0).toLocaleString();
   if(document.getElementById('crcErr')) document.getElementById('crcErr').textContent=d.crc_errors||0;
   if(document.getElementById('fps')) document.getElementById('fps').textContent=(d.fps||0.0).toFixed(1);
+  if(document.getElementById('seenIds'))
+    document.getElementById('seenIds').textContent=
+      '0x398:'+(d.seen_398||0)+' 0x3FD:'+(d.seen_3fd||0)+
+      ' 0x3F8:'+(d.seen_3f8||0)+' 0x318:'+(d.seen_318||0);
+  if(document.getElementById('stalkVal'))
+    document.getElementById('stalkVal').textContent=
+      'profile '+((d.speed_profile===undefined||d.speed_profile===null)?'?':d.speed_profile);
+
+  // Vehicle live readouts. Tier enum: 0=NONE 1=HIGHWAY 2=ENHANCED 3=SELF_DRIVING 4=BASIC.
+  var TIER=['NONE','HIGHWAY','ENHANCED','SELF_DRIVING','BASIC'];
+  var setT=function(id,t){var el=document.getElementById(id);if(el)el.textContent=t;};
+  setT('vSpeed', d.speed_seen?(d.vehicle_speed_kph.toFixed(1)+' kph (UI:'+d.ui_speed+')'):'--');
+  setT('vSteer', d.steering_seen?(d.steering_deg.toFixed(1)+'°'):'--');
+  setT('vTorque',d.torque_seen?(d.motor_torque_nm.toFixed(0)+' Nm'):'--');
+  setT('vBrake', d.brake_seen?(d.brake?'pressed':'released'):'--');
+  setT('vDasAp', d.das_ap_seen?((TIER[d.das_ap]||'?')+' ('+d.das_ap+')'):'--');
+  setT('vDasApBase', d.das_ap_seen?((TIER[d.das_ap_base]||'?')+' ('+d.das_ap_base+')'):'--');
+  setT('vHands', d.das_seen?String(d.das_hands_on):'--');
+  setT('vLane',  d.das_seen?String(d.das_lane):'--');
+  setT('vBlind', d.das_seen?String(d.das_blind):'--');
+  setT('vFcw',   d.das_seen?String(d.das_fcw):'--');
+  setT('vVisLim',d.das_seen?(d.das_vis_lim?(d.das_vis_lim*5+' kph'):'unset'):'--');
+  setT('raw145', d.raw_145||'--');
+  setT('raw39b', d.raw_39b||'--');
+  setT('raw129', d.raw_129||'--');
 
   // Battery
   if(d.bms && d.bms.seen){
@@ -406,6 +512,14 @@ function upd(d){
       ce.style.color=d.bms.current>=0?'var(--accent)':'var(--red)';
     }
     if(document.getElementById('bTemp')) document.getElementById('bTemp').textContent=d.bms.temp_min+'~'+d.bms.temp_max+'\u00b0C';
+  }
+  if(document.getElementById('lvBus')){
+    if(d.lv_bus_seen){
+      document.getElementById('lvBus').textContent=
+        d.lv_bus_v.toFixed(2)+' V  /  '+d.lv_bus_a.toFixed(1)+' A';
+    } else {
+      document.getElementById('lvBus').textContent='--';
+    }
   }
 
   // Device
@@ -513,7 +627,60 @@ static String build_json() {
     j += "\"fsd_enabled\":";   j += g_state->fsd_enabled             ? "true" : "false"; j += ',';
     j += "\"op_mode\":";       j += (int)g_state->op_mode;            j += ',';
     j += "\"hw_version\":";    j += (int)g_state->hw_version;         j += ',';
-    j += "\"ota\":";           j += g_state->tesla_ota_in_progress    ? "true" : "false"; j += ',';
+    j += "\"hw_override\":";   j += (int)g_state->hw_override;        j += ',';
+    j += "\"speed_profile\":"; j += (int)g_state->speed_profile;      j += ',';
+    j += "\"ota_raw\":";       j += (int)g_state->ota_raw_state;      j += ',';
+    j += "\"ota_ignore\":";    j += g_state->ota_ignore               ? "true" : "false"; j += ',';
+    j += "\"can_trace\":";     j += g_state->can_trace                ? "true" : "false"; j += ',';
+    // Vehicle dynamics + DAS readbacks (read-only, parsed from Party CAN).
+    // *_seen flags let the UI render "--" when the bus doesn't carry that ID.
+    j += "\"speed_seen\":";        j += g_state->speed_seen            ? "true" : "false"; j += ',';
+    j += "\"vehicle_speed_kph\":"; j += g_state->vehicle_speed_kph;     j += ',';
+    j += "\"ui_speed\":";          j += (int)g_state->ui_speed;         j += ',';
+    j += "\"steering_seen\":";     j += g_state->steering_seen         ? "true" : "false"; j += ',';
+    j += "\"steering_deg\":";      j += g_state->steering_angle_deg;    j += ',';
+    j += "\"torque_seen\":";       j += g_state->torque_seen           ? "true" : "false"; j += ',';
+    j += "\"motor_torque_nm\":";   j += g_state->motor_torque_nm;       j += ',';
+    j += "\"brake_seen\":";        j += g_state->brake_seen            ? "true" : "false"; j += ',';
+    j += "\"brake\":";             j += g_state->driver_brake_applied  ? "true" : "false"; j += ',';
+    j += "\"das_seen\":";          j += g_state->das_seen              ? "true" : "false"; j += ',';
+    j += "\"das_hands_on\":";      j += (int)g_state->das_hands_on_state; j += ',';
+    j += "\"das_lane\":";          j += (int)g_state->das_lane_change;  j += ',';
+    j += "\"das_blind\":";         j += (int)g_state->das_side_coll_warn; j += ',';
+    j += "\"das_avoid\":";         j += (int)g_state->das_side_coll_avoid; j += ',';
+    j += "\"das_fcw\":";           j += (int)g_state->das_fcw;          j += ',';
+    j += "\"das_vis_lim\":";       j += (int)g_state->das_vision_speed_lim; j += ',';
+    j += "\"das_ap_seen\":";       j += g_state->das_ap_seen           ? "true" : "false"; j += ',';
+    j += "\"das_ap\":";            j += (int)g_state->das_autopilot;    j += ',';
+    j += "\"das_ap_base\":";       j += (int)g_state->das_autopilot_base; j += ',';
+    j += "\"lv_bus_seen\":";       j += g_state->lv_bus_seen           ? "true" : "false"; j += ',';
+    j += "\"lv_bus_v\":";          j += g_state->lv_bus_voltage_v;       j += ',';
+    j += "\"lv_bus_a\":";          j += g_state->lv_bus_current_a;       j += ',';
+    // Raw byte snapshots for debugging firmware-version-specific bit positions.
+    auto raw_arr = [&](const char *key, uint8_t dlc, const uint8_t *bytes) {
+        j += '"'; j += key; j += "\":\"";
+        if (dlc == 0) { j += "--"; }
+        else {
+            char hex[4];
+            for (uint8_t i = 0; i < dlc && i < 8; i++) {
+                snprintf(hex, sizeof(hex), "%02X ", bytes[i]);
+                j += hex;
+            }
+        }
+        j += "\",";
+    };
+    raw_arr("raw_145", g_state->raw_145_dlc, g_state->raw_145_bytes);
+    raw_arr("raw_39b", g_state->raw_39b_dlc, g_state->raw_39b_bytes);
+    raw_arr("raw_129", g_state->raw_129_dlc, g_state->raw_129_bytes);
+    j += "\"seen_398\":";      j += g_state->seen_gtw_car_config;     j += ',';
+    j += "\"seen_3fd\":";      j += g_state->seen_ap_control;         j += ',';
+    j += "\"seen_3f8\":";      j += g_state->seen_follow_dist;        j += ',';
+    j += "\"seen_318\":";      j += g_state->seen_gtw_car_state;      j += ',';
+    // "ota" is the *effective* state (banner / TX-gate). When ota_ignore is
+    // on we bypass the detection, so callers see false even if the raw bits
+    // still match OTA_IN_PROGRESS_RAW_VALUE. The raw value is exposed
+    // separately in ota_raw for diagnostics.
+    j += "\"ota\":";           j += (g_state->tesla_ota_in_progress && !g_state->ota_ignore) ? "true" : "false"; j += ',';
     j += "\"nag_killer\":";    j += g_state->nag_killer               ? "true" : "false"; j += ',';
     j += "\"bms_output\":";    j += g_state->bms_output               ? "true" : "false"; j += ',';
     j += "\"force_fsd\":";     j += g_state->force_fsd                ? "true" : "false"; j += ',';
@@ -615,6 +782,44 @@ static void ws_event(uint8_t num, WStype_t type,
             if (val >= 10000) { // minimum 10s
                 g_state->sleep_idle_ms = val;
                 Serial.printf("[Web] Sleep timeout: %u ms\n", val);
+                prefs_save(g_state);
+            }
+        }
+    } else if (strstr(buf, "\"reboot\"")) {
+        Serial.println("[Web] Reboot requested via dashboard");
+        delay(200);  // let the WebSocket frame land in the browser
+        ESP.restart();
+    } else if (strstr(buf, "\"ota_ignore\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            g_state->ota_ignore = (strncmp(vptr, "true", 4) == 0);
+            Serial.printf("[Web] OTA ignore: %s (raw value seen: %u)\n",
+                          g_state->ota_ignore ? "ON" : "OFF",
+                          (unsigned)g_state->ota_raw_state);
+            prefs_save(g_state);
+        }
+    } else if (strstr(buf, "\"can_trace\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            g_state->can_trace = (strncmp(vptr, "true", 4) == 0);
+            Serial.printf("[Web] CAN trace: %s\n", g_state->can_trace ? "ON" : "OFF");
+            prefs_save(g_state);  // persisted so it survives the reset that
+                                  // happens when the user opens a serial monitor
+        }
+    } else if (strstr(buf, "\"hw_override\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            int v = atoi(vptr);
+            if (v >= TeslaHW_Unknown && v <= TeslaHW_HW4) {
+                g_state->hw_override = (TeslaHWVersion)v;
+                if (g_state->hw_override != TeslaHW_Unknown) {
+                    fsd_apply_hw_version(g_state, g_state->hw_override);
+                }
+                const char *hw_str =
+                    (v == TeslaHW_HW4)    ? "HW4"    :
+                    (v == TeslaHW_HW3)    ? "HW3"    :
+                    (v == TeslaHW_Legacy) ? "Legacy" : "Auto";
+                Serial.printf("[Web] HW Override: %s\n", hw_str);
                 prefs_save(g_state);
             }
         }
