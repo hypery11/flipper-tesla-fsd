@@ -10,9 +10,9 @@
  * WebSocket port 81 : pushes JSON state every 1 s;
  *                     receives control commands from the browser
  *
- * Call web_dashboard_init() once after wifi_ap_init() succeeds.
- * Call web_dashboard_update() every loop iteration (after CAN processing).
- * If init was never called, update() is a safe no-op.
+ * Call web_dashboard_init() once after wifi_ap_init() succeeds. It starts the
+ * Web/WiFi task on Core 0. web_dashboard_update() is kept as a safe no-op for
+ * API compatibility.
  */
 
 /**
@@ -23,5 +23,5 @@
  */
 void web_dashboard_init(FSDState *state, CanDriver *can);
 
-/** Service HTTP requests and WebSocket messages; broadcast state at 1 Hz. */
+/** Compatibility no-op; Web work runs in the Core 0 task. */
 void web_dashboard_update();

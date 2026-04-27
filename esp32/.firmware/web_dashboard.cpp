@@ -7,8 +7,8 @@
  * All HTML/CSS/JS is embedded as a raw-string literal — no external CDN.
  * State is read directly from the FSDState pointer; controls write back to it.
  *
- * Single-threaded: both handleClient() and ws.loop() are called from loop()
- * after the CAN drain, so there is no concurrency issue.
+ * Web/WiFi work runs in a dedicated FreeRTOS task pinned to Core 0.
+ * CAN work runs separately from main.cpp on Core 1.
  */
 
 #include "web_dashboard.h"
@@ -20,6 +20,8 @@
 #include <Arduino.h>
 #include <Update.h>
 #include <esp_ota_ops.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 // ── Module state ──────────────────────────────────────────────────────────────
 static FSDState  *g_state = nullptr;   // shared with main
@@ -33,8 +35,11 @@ static uint32_t g_last_rx     = 0;
 static uint32_t g_last_fps_ms = 0;
 static uint32_t g_last_can_seen_ms = 0;
 static float    g_fps         = 0.0f;
+static TaskHandle_t g_web_task_handle = nullptr;
 
 #define CAN_VEHICLE_ALIVE_MS 3000u
+
+static void web_server_task(void *param);
 
 // ── Embedded HTML/CSS/JS ──────────────────────────────────────────────────────
 // Tesla dark theme; mobile-first (max 480 px); WebSocket on :81
@@ -1009,26 +1014,54 @@ void web_dashboard_init(FSDState *state, CanDriver *can) {
     g_ws.begin();
     g_ws.onEvent(ws_event);
 
+    if (g_web_task_handle == nullptr) {
+        BaseType_t web_task_ok = xTaskCreatePinnedToCore(
+            web_server_task,
+            "WebServer",
+            8192,
+            nullptr,
+            1,
+            &g_web_task_handle,
+            0);
+        if (web_task_ok == pdPASS) {
+            Serial.println("[Web] Task created on Core 0");
+        } else {
+            Serial.println("[Web] ERROR: could not create Core 0 task");
+            g_web_task_handle = nullptr;
+        }
+    }
+
     Serial.println("[Web] HTTP :80  WS :81 — ready");
 }
 
-void web_dashboard_update() {
-    if (g_state == nullptr) return;   // init was never called (WiFi failed)
+static void web_server_task(void *param) {
+    (void)param;
+    Serial.printf("[Web] Task started on Core %d\n", xPortGetCoreID());
 
-    g_http.handleClient();
-    g_ws.loop();
+    while (true) {
+        if (g_state != nullptr) {
+            g_http.handleClient();
+            g_ws.loop();
 
-    // FPS calculation + 1 Hz WebSocket broadcast
-    uint32_t now = millis();
-    if ((now - g_last_fps_ms) >= 1000u) {
-        uint32_t rx = g_state->rx_count;
-        float    dt = (now - g_last_fps_ms) / 1000.0f;
-        if (rx != g_last_rx) g_last_can_seen_ms = now;
-        g_fps        = (float)(rx - g_last_rx) / dt;
-        g_last_rx    = rx;
-        g_last_fps_ms = now;
+            // FPS calculation + 1 Hz WebSocket broadcast
+            uint32_t now = millis();
+            if ((now - g_last_fps_ms) >= 1000u) {
+                uint32_t rx = g_state->rx_count;
+                float    dt = (now - g_last_fps_ms) / 1000.0f;
+                if (rx != g_last_rx) g_last_can_seen_ms = now;
+                g_fps        = (float)(rx - g_last_rx) / dt;
+                g_last_rx    = rx;
+                g_last_fps_ms = now;
 
-        String json = build_json();
-        g_ws.broadcastTXT(json.c_str(), json.length());
+                String json = build_json();
+                g_ws.broadcastTXT(json.c_str(), json.length());
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
+}
+
+void web_dashboard_update() {
+    // Web work runs in web_server_task on Core 0.
 }
