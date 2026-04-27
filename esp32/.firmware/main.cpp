@@ -387,6 +387,7 @@ void setup() {
     g_state.suppress_speed_chime  = true;
     g_state.emergency_vehicle_detect = false;
     g_state.force_fsd             = false;
+    g_state.china_mode            = false;
     g_state.bms_output            = false;
 
     prefs_load(&g_state);

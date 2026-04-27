@@ -265,6 +265,10 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <label class="sw"><input type="checkbox" id="swFsd" onchange="cmd('force_fsd',this.checked)"><span class="sl2"></span></label>
   </div>
   <div class="row">
+    <span class="lbl">China Mode</span>
+    <label class="sw"><input type="checkbox" id="swChina" onchange="cmd('china_mode',this.checked)"><span class="sl2"></span></label>
+  </div>
+  <div class="row">
     <span class="lbl">TLSSC Restore</span>
     <label class="sw"><input type="checkbox" id="swTlssc" onchange="cmd('tlssc_restore',this.checked)"><span class="sl2"></span></label>
   </div>
@@ -418,6 +422,7 @@ function upd(d){
   if(document.getElementById('swNag')) document.getElementById('swNag').checked=d.nag_killer;
   if(document.getElementById('swBms')) document.getElementById('swBms').checked=d.bms_output;
   if(document.getElementById('swFsd')) document.getElementById('swFsd').checked=d.force_fsd;
+  if(document.getElementById('swChina')) document.getElementById('swChina').checked=d.china_mode;
   if(document.getElementById('swTlssc')) document.getElementById('swTlssc').checked=d.tlssc_restore;
   if(document.getElementById('swDump')) document.getElementById('swDump').checked=!!d.can_dump;
   
@@ -606,6 +611,7 @@ static String build_json() {
     j += "\"nag_killer\":";    j += g_state->nag_killer               ? "true" : "false"; j += ',';
     j += "\"bms_output\":";    j += g_state->bms_output               ? "true" : "false"; j += ',';
     j += "\"force_fsd\":";     j += g_state->force_fsd                ? "true" : "false"; j += ',';
+    j += "\"china_mode\":";    j += g_state->china_mode               ? "true" : "false"; j += ',';
     j += "\"tlssc_restore\":"; j += g_state->tlssc_restore            ? "true" : "false"; j += ',';
     j += "\"can_vehicle_detected\":"; j += can_vehicle_detected       ? "true" : "false"; j += ',';
     j += "\"bms_hv_seen\":";   j += g_state->seen_bms_hv;              j += ',';
@@ -688,6 +694,13 @@ static void ws_event(uint8_t num, WStype_t type,
             while (*vptr == ' ' || *vptr == ':') vptr++;
             g_state->force_fsd = (strncmp(vptr, "true", 4) == 0);
             Serial.printf("[Web] Force FSD: %s\n", g_state->force_fsd ? "ON" : "OFF");
+            prefs_save(g_state);
+        }
+    } else if (strstr(buf, "\"china_mode\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            g_state->china_mode = (strncmp(vptr, "true", 4) == 0);
+            Serial.printf("[Web] China Mode: %s\n", g_state->china_mode ? "ON" : "OFF");
             prefs_save(g_state);
         }
     } else if (strstr(buf, "\"dump\"")) {
