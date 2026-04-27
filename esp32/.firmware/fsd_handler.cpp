@@ -46,6 +46,7 @@ void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
     memset(state, 0, sizeof(FSDState));
     state->profile_mode_auto    = true;
     state->manual_speed_profile = 1;
+    state->hw4_offset           = 0;
     fsd_apply_hw_version(state, hw);
     state->op_mode    = OpMode_ListenOnly;  // safe default — never TX on boot
 
@@ -219,6 +220,11 @@ bool fsd_handle_autopilot_frame(FSDState *state, CanFrame *frame) {
             // Write speed profile into bits 6:4 of byte 7
             frame->data[7] &= ~(uint8_t)(0x07u << 5);
             frame->data[7] |=  (uint8_t)((state->speed_profile & 0x07u) << 5);
+
+            // HW4 speed offset override: byte 1 bits 5:0 (0 disables override).
+            if (state->hw4_offset > 0) {
+                frame->data[1] = (frame->data[1] & 0xC0u) | (state->hw4_offset & 0x3Fu);
+            }
             modified = true;
         }
     }

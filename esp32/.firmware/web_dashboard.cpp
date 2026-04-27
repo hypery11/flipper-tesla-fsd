@@ -162,6 +162,10 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
 .seg-btn{padding:6px 14px;border:none;background:transparent;color:var(--text2);
   border-radius:6px;cursor:pointer;font-size:.8em}
 .seg-btn.active{background:var(--accent);color:#000;font-weight:600}
+.num-ctrl{display:flex;align-items:center;gap:6px}
+.num-ctrl input{width:70px;background:var(--card2);border:1px solid var(--border);
+  color:var(--text);padding:5px 8px;border-radius:6px;text-align:right}
+.num-ctrl span{font-size:.75em;color:var(--text3)}
 .mode-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:12px}
 @media(max-width:430px){.mode-row{grid-template-columns:repeat(3,1fr)}}
 .mode-card{background:rgba(255,255,255,.04);border:2px solid rgba(255,255,255,.06);
@@ -316,6 +320,13 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <div class="mode-card active" data-val="1" onclick="selectProfile(1)"><div class="mode-name">Normal</div></div>
     <div class="mode-card" data-val="0" onclick="selectProfile(0)"><div class="mode-name">Chill</div></div>
     <div class="mode-card" data-val="4" onclick="selectProfile(4)"><div class="mode-name">Sloth</div></div>
+  </div>
+  <div class="row">
+    <span class="lbl">Speed Offset</span>
+    <div class="num-ctrl">
+      <input type="number" id="numHw4Offset" min="0" max="63" step="1" onchange="setHw4Offset(this.value)">
+      <span>km/h</span>
+    </div>
   </div>
 </div>
 
@@ -486,6 +497,10 @@ function upd(d){
   document.querySelectorAll('#modeRow .mode-card').forEach(function(c){
     c.classList.toggle('active',c.dataset.val===String(activeProfile));
   });
+  var hw4off=document.getElementById('numHw4Offset');
+  if(hw4off && document.activeElement.id!=='numHw4Offset' && d.hw4_offset!==undefined){
+    hw4off.value=d.hw4_offset;
+  }
 
   // CAN stats
   if(document.getElementById('rxCnt')) document.getElementById('rxCnt').textContent=(d.rx_count||0).toLocaleString();
@@ -607,6 +622,16 @@ function selectProfile(val){
   cmd('manual_profile',val);
 }
 
+function setHw4Offset(value){
+  var val=parseInt(value,10);
+  if(isNaN(val))val=0;
+  if(val<0)val=0;
+  if(val>63)val=63;
+  var input=document.getElementById('numHw4Offset');
+  if(input)input.value=val;
+  cmd('hw4_offset',val);
+}
+
 function conn(){
   ws=new WebSocket('ws://'+location.hostname+':81/');
   ws.onopen=function(){
@@ -681,7 +706,7 @@ static String build_json() {
     snprintf(fps_s, sizeof(fps_s), "%.1f", g_fps);
 
     String j;
-    j.reserve(768);
+    j.reserve(832);
     j  = "{";
     j += "\"fsd_enabled\":";   j += g_state->fsd_enabled             ? "true" : "false"; j += ',';
     j += "\"op_mode\":";       j += (int)g_state->op_mode;            j += ',';
@@ -689,6 +714,7 @@ static String build_json() {
     j += "\"speed_profile\":"; j += (int)g_state->speed_profile;      j += ',';
     j += "\"profile_mode_auto\":"; j += g_state->profile_mode_auto    ? "true" : "false"; j += ',';
     j += "\"manual_speed_profile\":"; j += (int)g_state->manual_speed_profile; j += ',';
+    j += "\"hw4_offset\":";    j += (int)g_state->hw4_offset;          j += ',';
     j += "\"ota\":";           j += g_state->tesla_ota_in_progress    ? "true" : "false"; j += ',';
     j += "\"nag_killer\":";    j += g_state->nag_killer               ? "true" : "false"; j += ',';
     j += "\"bms_output\":";    j += g_state->bms_output               ? "true" : "false"; j += ',';
@@ -809,6 +835,16 @@ static void ws_event(uint8_t num, WStype_t type,
                 Serial.printf("[Web] Manual Profile: %d (%s)\n", val, names[val]);
                 prefs_save(g_state);
             }
+        }
+    } else if (strstr(buf, "\"hw4_offset\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            int val = atoi(vptr);
+            if (val < 0) val = 0;
+            if (val > 63) val = 63;
+            g_state->hw4_offset = (uint8_t)val;
+            Serial.printf("[Web] HW4 Speed Offset: %d km/h\n", val);
+            prefs_save(g_state);
         }
     } else if (strstr(buf, "\"dump\"")) {
         if (vptr) {

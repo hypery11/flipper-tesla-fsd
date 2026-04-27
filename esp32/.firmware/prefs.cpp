@@ -30,12 +30,14 @@ void prefs_load(FSDState *state) {
     state->profile_mode_auto = g_prefs.getBool("pauto", true);
     state->manual_speed_profile = g_prefs.getUChar("mprof", 1);
     if (state->manual_speed_profile > 4) state->manual_speed_profile = 1;
+    state->hw4_offset = g_prefs.getUChar("hw4off", 0);
+    if (state->hw4_offset > 63) state->hw4_offset = 0;
     if (!state->profile_mode_auto) state->speed_profile = state->manual_speed_profile;
     
-    Serial.printf("[NVS] Loaded: NAG=%d China=%d Profile=%s/%u Sleep=%u SSID=\"%s\" HIDDEN=%d\n",
+    Serial.printf("[NVS] Loaded: NAG=%d China=%d Profile=%s/%u HW4Off=%u Sleep=%u SSID=\"%s\" HIDDEN=%d\n",
                   state->nag_killer, state->china_mode,
                   state->profile_mode_auto ? "Auto" : "Manual",
-                  state->manual_speed_profile, state->sleep_idle_ms,
+                  state->manual_speed_profile, state->hw4_offset, state->sleep_idle_ms,
                   state->wifi_ssid, state->wifi_hidden);
     g_prefs.end();
 }
@@ -68,11 +70,12 @@ void prefs_save(const FSDState *state) {
     g_prefs.putUChar("mode",  (uint8_t)state->op_mode);
     g_prefs.putBool("pauto",  state->profile_mode_auto);
     g_prefs.putUChar("mprof", state->manual_speed_profile);
+    g_prefs.putUChar("hw4off", state->hw4_offset);
     
-    Serial.printf("[NVS] Saved: NAG=%d China=%d Profile=%s/%u Sleep=%u SSID=\"%s\" HIDDEN=%d\n",
+    Serial.printf("[NVS] Saved: NAG=%d China=%d Profile=%s/%u HW4Off=%u Sleep=%u SSID=\"%s\" HIDDEN=%d\n",
                   state->nag_killer, state->china_mode,
                   state->profile_mode_auto ? "Auto" : "Manual",
-                  state->manual_speed_profile, state->sleep_idle_ms,
+                  state->manual_speed_profile, state->hw4_offset, state->sleep_idle_ms,
                   state->wifi_ssid, state->wifi_hidden);
     g_prefs.end();
 }

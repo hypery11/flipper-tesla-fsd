@@ -88,6 +88,7 @@ struct FSDState {
     // ── Driving Mode Control (HW4) ───────────────────────────────────────────
     bool           profile_mode_auto;          // true=Follow Distance stalk, false=Web UI
     uint8_t        manual_speed_profile;       // manually selected profile in Web UI (0-4)
+    uint8_t        hw4_offset;                 // HW4 speed offset override (0-63, 0=disabled)
 
     // ── DAS status (0x39B) — nag killer gating ───────────────────────────────
     // 0=NOT_REQD, 8=SUSPENDED — both mean DAS is satisfied, skip echo.
