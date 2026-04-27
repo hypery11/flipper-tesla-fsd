@@ -492,6 +492,8 @@ void setup() {
     g_state.profile_mode_auto     = true;
     g_state.manual_speed_profile  = 1;
     g_state.hw4_offset            = 0;
+    g_state.hw4_offset_percent_mode = false;
+    g_state.hw4_offset_active     = 0;
     g_state.bms_output            = false;
 
     prefs_load(&g_state);

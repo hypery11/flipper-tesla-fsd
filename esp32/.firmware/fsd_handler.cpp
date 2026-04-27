@@ -47,6 +47,13 @@ void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
     state->profile_mode_auto    = true;
     state->manual_speed_profile = 1;
     state->hw4_offset           = 0;
+    state->hw4_offset_percent_mode = false;
+    state->hw4_offset_tier_limit[0]   = 30;
+    state->hw4_offset_tier_limit[1]   = 50;
+    state->hw4_offset_tier_limit[2]   = 100;
+    state->hw4_offset_tier_percent[0] = 50;
+    state->hw4_offset_tier_percent[1] = 30;
+    state->hw4_offset_tier_percent[2] = 10;
     fsd_apply_hw_version(state, hw);
     state->op_mode    = OpMode_ListenOnly;  // safe default — never TX on boot
 
@@ -221,9 +228,31 @@ bool fsd_handle_autopilot_frame(FSDState *state, CanFrame *frame) {
             frame->data[7] &= ~(uint8_t)(0x07u << 5);
             frame->data[7] |=  (uint8_t)((state->speed_profile & 0x07u) << 5);
 
-            // HW4 speed offset override: byte 1 bits 5:0 (0 disables override).
-            if (state->hw4_offset > 0) {
-                frame->data[1] = (frame->data[1] & 0xC0u) | (state->hw4_offset & 0x3Fu);
+            // HW4 speed offset override: byte 1 bits 5:0.
+            // Fixed mode: 0 disables override. Percent mode: write the computed
+            // value when a DAS speed limit is known, even when that value is 0.
+            uint8_t offset = state->hw4_offset;
+            bool write_offset = (offset > 0);
+            if (state->hw4_offset_percent_mode) {
+                offset = 0;
+                write_offset = false;
+                uint16_t limit_kph = (uint16_t)state->das_vision_speed_lim * 5u;
+                if (limit_kph > 0) {
+                    write_offset = true;
+                    uint8_t percent = 0;
+                    for (uint8_t i = 0; i < 3; ++i) {
+                        if (limit_kph <= state->hw4_offset_tier_limit[i]) {
+                            percent = state->hw4_offset_tier_percent[i];
+                            break;
+                        }
+                    }
+                    uint16_t offset_kph = (limit_kph * percent + 50u) / 100u;
+                    offset = (offset_kph > 63u) ? 63u : (uint8_t)offset_kph;
+                }
+            }
+            state->hw4_offset_active = offset;
+            if (write_offset) {
+                frame->data[1] = (frame->data[1] & 0xC0u) | (offset & 0x3Fu);
             }
             modified = true;
         }
@@ -444,5 +473,7 @@ void fsd_handle_das_status(FSDState *state, const CanFrame *frame) {
     if (frame->dlc < 6) return;
     // DAS_autopilotHandsOnState: bit42|4 LE → byte5 bits[5:2]
     state->das_hands_on_state = (frame->data[5] >> 2) & 0x0Fu;
+    // DAS_visionOnlySpeedLimit: byte2 bits[4:0], raw value is in 5 km/h steps.
+    state->das_vision_speed_lim = frame->data[2] & 0x1Fu;
     state->das_seen = true;
 }

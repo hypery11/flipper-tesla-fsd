@@ -89,6 +89,11 @@ struct FSDState {
     bool           profile_mode_auto;          // true=Follow Distance stalk, false=Web UI
     uint8_t        manual_speed_profile;       // manually selected profile in Web UI (0-4)
     uint8_t        hw4_offset;                 // HW4 speed offset override (0-63, 0=disabled)
+    bool           hw4_offset_percent_mode;    // true=calculate offset from DAS speed limit
+    uint8_t        hw4_offset_tier_limit[3];   // speed limit thresholds in km/h
+    uint8_t        hw4_offset_tier_percent[3]; // offset percent for each threshold
+    uint8_t        hw4_offset_active;          // last offset written to mux=2, in km/h
+    uint8_t        das_vision_speed_lim;       // DAS_visionOnlySpeedLimit raw value, x5 = km/h
 
     // ── DAS status (0x39B) — nag killer gating ───────────────────────────────
     // 0=NOT_REQD, 8=SUSPENDED — both mean DAS is satisfied, skip echo.

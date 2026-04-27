@@ -167,6 +167,13 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
 .num-ctrl input{width:70px;background:var(--card2);border:1px solid var(--border);
   color:var(--text);padding:5px 8px;border-radius:6px;text-align:right}
 .num-ctrl span{font-size:.75em;color:var(--text3)}
+.tier-box{margin-top:10px;display:none}
+.tier-row{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;
+  padding:7px 0;border-top:1px solid rgba(255,255,255,.04)}
+.tier-row:first-child{border-top:0}
+.tier-row input{width:64px;background:var(--card2);border:1px solid var(--border);
+  color:var(--text);padding:5px 7px;border-radius:6px;text-align:right}
+.tier-mid{font-size:.75em;color:var(--text3);white-space:nowrap}
 .mode-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:12px}
 @media(max-width:430px){.mode-row{grid-template-columns:repeat(3,1fr)}}
 .mode-card{background:rgba(255,255,255,.04);border:2px solid rgba(255,255,255,.06);
@@ -323,10 +330,57 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <div class="mode-card" data-val="4" onclick="selectProfile(4)"><div class="mode-name">Sloth</div></div>
   </div>
   <div class="row">
-    <span class="lbl">Speed Offset</span>
+    <span class="lbl">Offset Mode</span>
+    <div class="seg-group">
+      <button class="seg-btn active" id="btnOffFixed" onclick="setOffsetMode(false)">Fixed</button>
+      <button class="seg-btn" id="btnOffPct" onclick="setOffsetMode(true)">%</button>
+    </div>
+  </div>
+  <div class="row" id="fixedOffsetRow">
+    <span class="lbl">Fixed Offset</span>
     <div class="num-ctrl">
       <input type="number" id="numHw4Offset" min="0" max="63" step="1" onchange="setHw4Offset(this.value)">
       <span>km/h</span>
+    </div>
+  </div>
+  <div class="row">
+    <span class="lbl">Current Limit</span>
+    <span id="dasLimit" style="font-size:.85em;color:var(--text2)">--</span>
+  </div>
+  <div class="row">
+    <span class="lbl">Active Offset</span>
+    <span id="activeOffset" style="font-size:.85em;color:var(--text2)">--</span>
+  </div>
+  <div class="tier-box" id="pctOffsetBox">
+    <div class="tier-row">
+      <span class="lbl">Limit 1</span>
+      <span class="tier-mid">&le;</span>
+      <div class="num-ctrl"><input type="number" id="tierLimit0" min="0" max="155" step="5" onchange="setHw4Tier(0,'limit',this.value)"><span>km/h</span></div>
+    </div>
+    <div class="tier-row">
+      <span class="lbl">Offset 1</span>
+      <span class="tier-mid">+</span>
+      <div class="num-ctrl"><input type="number" id="tierPct0" min="0" max="100" step="1" onchange="setHw4Tier(0,'percent',this.value)"><span>%</span></div>
+    </div>
+    <div class="tier-row">
+      <span class="lbl">Limit 2</span>
+      <span class="tier-mid">&le;</span>
+      <div class="num-ctrl"><input type="number" id="tierLimit1" min="0" max="155" step="5" onchange="setHw4Tier(1,'limit',this.value)"><span>km/h</span></div>
+    </div>
+    <div class="tier-row">
+      <span class="lbl">Offset 2</span>
+      <span class="tier-mid">+</span>
+      <div class="num-ctrl"><input type="number" id="tierPct1" min="0" max="100" step="1" onchange="setHw4Tier(1,'percent',this.value)"><span>%</span></div>
+    </div>
+    <div class="tier-row">
+      <span class="lbl">Limit 3</span>
+      <span class="tier-mid">&le;</span>
+      <div class="num-ctrl"><input type="number" id="tierLimit2" min="0" max="155" step="5" onchange="setHw4Tier(2,'limit',this.value)"><span>km/h</span></div>
+    </div>
+    <div class="tier-row">
+      <span class="lbl">Offset 3</span>
+      <span class="tier-mid">+</span>
+      <div class="num-ctrl"><input type="number" id="tierPct2" min="0" max="100" step="1" onchange="setHw4Tier(2,'percent',this.value)"><span>%</span></div>
     </div>
   </div>
 </div>
@@ -502,6 +556,17 @@ function upd(d){
   if(hw4off && document.activeElement.id!=='numHw4Offset' && d.hw4_offset!==undefined){
     hw4off.value=d.hw4_offset;
   }
+  if(d.hw4_offset_percent_mode!==undefined) syncOffsetMode(!!d.hw4_offset_percent_mode);
+  for(var ti=0;ti<3;ti++){
+    var lim=document.getElementById('tierLimit'+ti);
+    var pct=document.getElementById('tierPct'+ti);
+    if(lim && document.activeElement.id!==lim.id && d['hw4_tier'+ti+'_limit']!==undefined) lim.value=d['hw4_tier'+ti+'_limit'];
+    if(pct && document.activeElement.id!==pct.id && d['hw4_tier'+ti+'_percent']!==undefined) pct.value=d['hw4_tier'+ti+'_percent'];
+  }
+  var dasLimit=document.getElementById('dasLimit');
+  if(dasLimit) dasLimit.textContent=(d.das_speed_limit_kph>0)?(d.das_speed_limit_kph+' km/h'):'--';
+  var activeOffset=document.getElementById('activeOffset');
+  if(activeOffset) activeOffset.textContent=(d.hw4_offset_active||0)+' km/h';
 
   // CAN stats
   if(document.getElementById('rxCnt')) document.getElementById('rxCnt').textContent=(d.rx_count||0).toLocaleString();
@@ -633,6 +698,39 @@ function setHw4Offset(value){
   cmd('hw4_offset',val);
 }
 
+function syncOffsetMode(percent){
+  var btnFixed=document.getElementById('btnOffFixed');
+  var btnPct=document.getElementById('btnOffPct');
+  var fixedRow=document.getElementById('fixedOffsetRow');
+  var pctBox=document.getElementById('pctOffsetBox');
+  if(btnFixed&&btnPct){
+    btnFixed.className=percent?'seg-btn':'seg-btn active';
+    btnPct.className=percent?'seg-btn active':'seg-btn';
+  }
+  if(fixedRow)fixedRow.style.display=percent?'none':'flex';
+  if(pctBox)pctBox.style.display=percent?'block':'none';
+}
+
+function setOffsetMode(percent){
+  syncOffsetMode(percent);
+  cmd('hw4_offset_percent_mode',!!percent);
+}
+
+function setHw4Tier(idx,field,value){
+  var val=parseInt(value,10);
+  if(isNaN(val))val=0;
+  if(field==='limit'){
+    if(val<0)val=0;
+    if(val>155)val=155;
+  }else{
+    if(val<0)val=0;
+    if(val>100)val=100;
+  }
+  var input=document.getElementById((field==='limit'?'tierLimit':'tierPct')+idx);
+  if(input)input.value=val;
+  cmd('hw4_tier'+idx+'_'+field,val);
+}
+
 function conn(){
   ws=new WebSocket('ws://'+location.hostname+':81/');
   ws.onopen=function(){
@@ -707,7 +805,7 @@ static String build_json() {
     snprintf(fps_s, sizeof(fps_s), "%.1f", g_fps);
 
     String j;
-    j.reserve(832);
+    j.reserve(1152);
     j  = "{";
     j += "\"fsd_enabled\":";   j += g_state->fsd_enabled             ? "true" : "false"; j += ',';
     j += "\"op_mode\":";       j += (int)g_state->op_mode;            j += ',';
@@ -716,6 +814,13 @@ static String build_json() {
     j += "\"profile_mode_auto\":"; j += g_state->profile_mode_auto    ? "true" : "false"; j += ',';
     j += "\"manual_speed_profile\":"; j += (int)g_state->manual_speed_profile; j += ',';
     j += "\"hw4_offset\":";    j += (int)g_state->hw4_offset;          j += ',';
+    j += "\"hw4_offset_percent_mode\":"; j += g_state->hw4_offset_percent_mode ? "true" : "false"; j += ',';
+    j += "\"hw4_offset_active\":"; j += (int)g_state->hw4_offset_active; j += ',';
+    j += "\"das_speed_limit_kph\":"; j += (int)g_state->das_vision_speed_lim * 5; j += ',';
+    for (uint8_t i = 0; i < 3; ++i) {
+        j += "\"hw4_tier"; j += i; j += "_limit\":"; j += (int)g_state->hw4_offset_tier_limit[i]; j += ',';
+        j += "\"hw4_tier"; j += i; j += "_percent\":"; j += (int)g_state->hw4_offset_tier_percent[i]; j += ',';
+    }
     j += "\"ota\":";           j += g_state->tesla_ota_in_progress    ? "true" : "false"; j += ',';
     j += "\"nag_killer\":";    j += g_state->nag_killer               ? "true" : "false"; j += ',';
     j += "\"bms_output\":";    j += g_state->bms_output               ? "true" : "false"; j += ',';
@@ -835,6 +940,40 @@ static void ws_event(uint8_t num, WStype_t type,
                 const char *names[] = {"Chill", "Normal", "Hurry", "Max", "Sloth"};
                 Serial.printf("[Web] Manual Profile: %d (%s)\n", val, names[val]);
                 prefs_save(g_state);
+            }
+        }
+    } else if (strstr(buf, "\"hw4_offset_percent_mode\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            g_state->hw4_offset_percent_mode = (strncmp(vptr, "true", 4) == 0);
+            Serial.printf("[Web] HW4 Offset Mode: %s\n",
+                g_state->hw4_offset_percent_mode ? "Percent" : "Fixed");
+            prefs_save(g_state);
+        }
+    } else if (strstr(buf, "\"hw4_tier")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            int val = atoi(vptr);
+            for (uint8_t i = 0; i < 3; ++i) {
+                char key[28];
+                snprintf(key, sizeof(key), "\"hw4_tier%u_limit\"", i);
+                if (strstr(buf, key)) {
+                    if (val < 0) val = 0;
+                    if (val > 155) val = 155;
+                    g_state->hw4_offset_tier_limit[i] = (uint8_t)val;
+                    Serial.printf("[Web] HW4 Offset Tier %u Limit: %d km/h\n", i + 1, val);
+                    prefs_save(g_state);
+                    break;
+                }
+                snprintf(key, sizeof(key), "\"hw4_tier%u_percent\"", i);
+                if (strstr(buf, key)) {
+                    if (val < 0) val = 0;
+                    if (val > 100) val = 100;
+                    g_state->hw4_offset_tier_percent[i] = (uint8_t)val;
+                    Serial.printf("[Web] HW4 Offset Tier %u Percent: %d%%\n", i + 1, val);
+                    prefs_save(g_state);
+                    break;
+                }
             }
         }
     } else if (strstr(buf, "\"hw4_offset\"")) {
