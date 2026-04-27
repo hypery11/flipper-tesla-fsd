@@ -44,6 +44,8 @@ static bool is_fsd_selected(const CanFrame *frame, bool force_fsd, bool china_mo
 
 void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
     memset(state, 0, sizeof(FSDState));
+    state->profile_mode_auto    = true;
+    state->manual_speed_profile = 1;
     fsd_apply_hw_version(state, hw);
     state->op_mode    = OpMode_ListenOnly;  // safe default — never TX on boot
 
@@ -63,9 +65,14 @@ void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
 
 void fsd_apply_hw_version(FSDState *state, TeslaHWVersion hw) {
     state->hw_version = hw;
+    if (!state->profile_mode_auto) {
+        state->speed_profile = state->manual_speed_profile;
+        return;
+    }
+
     // Default speed profile per HW version
     if (hw == TeslaHW_HW4)
-        state->speed_profile = 4;
+        state->speed_profile = 1;
     else if (hw == TeslaHW_Legacy)
         state->speed_profile = 1;
     else

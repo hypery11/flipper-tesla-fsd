@@ -274,7 +274,9 @@ static void process_frame(const CanFrame &frame) {
 
     // Follow distance → speed_profile (0x3F8), no TX
     if (frame.id == CAN_ID_FOLLOW_DIST) {
-        fsd_handle_follow_distance(&g_state, &frame);
+        if (g_state.profile_mode_auto) {
+            fsd_handle_follow_distance(&g_state, &frame);
+        }
         return;
     }
 
@@ -388,6 +390,8 @@ void setup() {
     g_state.emergency_vehicle_detect = false;
     g_state.force_fsd             = false;
     g_state.china_mode            = false;
+    g_state.profile_mode_auto     = true;
+    g_state.manual_speed_profile  = 1;
     g_state.bms_output            = false;
 
     prefs_load(&g_state);

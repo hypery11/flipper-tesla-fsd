@@ -152,6 +152,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 input:checked+.sl2{background:var(--accent)}
 input:checked+.sl2:before{transform:translateX(20px);background:#fff}
 
+/* ── Driving profile ── */
+.seg-group{display:inline-flex;gap:4px;background:var(--card2);border-radius:8px;padding:3px}
+.seg-btn{padding:6px 14px;border:none;background:transparent;color:var(--text2);
+  border-radius:6px;cursor:pointer;font-size:.8em}
+.seg-btn.active{background:var(--accent);color:#000;font-weight:600}
+.mode-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:12px}
+@media(max-width:430px){.mode-row{grid-template-columns:repeat(3,1fr)}}
+.mode-card{background:rgba(255,255,255,.04);border:2px solid rgba(255,255,255,.06);
+  border-radius:8px;padding:10px 6px;text-align:center;cursor:pointer;transition:.2s;min-height:58px}
+.mode-card.active{border-color:var(--accent);background:rgba(0,212,170,.1)}
+.mode-card.disabled{opacity:.35;pointer-events:none}
+.mode-name{font-size:.78em;font-weight:600;line-height:1.25}
+
 /* ── OTA firmware update ── */
 .ota-file{display:none}.ota-progress{display:none;margin-top:12px}
 .ota-track{background:var(--card2);border-radius:8px;height:10px;overflow:hidden}
@@ -279,6 +292,25 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
   <div class="row">
     <span class="lbl">Deep Sleep (sec)</span>
     <input type="number" id="numSleep" min="10" max="3600" style="width:60px;background:var(--card2);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px;text-align:right" onchange="cmd('sleep',parseInt(this.value)*1000)">
+  </div>
+</div>
+
+<!-- Driving Profile -->
+<div class="card" id="profileCard" style="display:none">
+  <div class="card-head"><div class="icon ic-c">P</div><h2>Driving Profile</h2></div>
+  <div class="row">
+    <span class="lbl">Profile Source</span>
+    <div class="seg-group">
+      <button class="seg-btn active" id="btnProfAuto" onclick="setProfileMode(true)">Auto</button>
+      <button class="seg-btn" id="btnProfMan" onclick="setProfileMode(false)">Manual</button>
+    </div>
+  </div>
+  <div class="mode-row" id="modeRow">
+    <div class="mode-card" data-val="3" onclick="selectProfile(3)"><div class="mode-name">Max</div></div>
+    <div class="mode-card" data-val="2" onclick="selectProfile(2)"><div class="mode-name">Hurry</div></div>
+    <div class="mode-card active" data-val="1" onclick="selectProfile(1)"><div class="mode-name">Normal</div></div>
+    <div class="mode-card" data-val="0" onclick="selectProfile(0)"><div class="mode-name">Chill</div></div>
+    <div class="mode-card" data-val="4" onclick="selectProfile(4)"><div class="mode-name">Sloth</div></div>
   </div>
 </div>
 
@@ -431,6 +463,25 @@ function upd(d){
   
   pill('dumpSt',d.can_dump,d.can_dump?'Recording':'Idle');
 
+  // Driving profile (HW4 only)
+  var profCard=document.getElementById('profileCard');
+  if(profCard) profCard.style.display=(d.hw_version===3)?'block':'none';
+  if(d.profile_mode_auto!==undefined){
+    var btnAuto=document.getElementById('btnProfAuto');
+    var btnMan=document.getElementById('btnProfMan');
+    if(btnAuto&&btnMan){
+      btnAuto.className=d.profile_mode_auto?'seg-btn active':'seg-btn';
+      btnMan.className=d.profile_mode_auto?'seg-btn':'seg-btn active';
+    }
+    document.querySelectorAll('#modeRow .mode-card').forEach(function(c){
+      c.classList.toggle('disabled',d.profile_mode_auto);
+    });
+  }
+  var activeProfile=d.profile_mode_auto?d.speed_profile:d.manual_speed_profile;
+  document.querySelectorAll('#modeRow .mode-card').forEach(function(c){
+    c.classList.toggle('active',c.dataset.val===String(activeProfile));
+  });
+
   // CAN stats
   if(document.getElementById('rxCnt')) document.getElementById('rxCnt').textContent=(d.rx_count||0).toLocaleString();
   if(document.getElementById('txCnt')) document.getElementById('txCnt').textContent=(d.tx_count||0).toLocaleString();
@@ -528,6 +579,29 @@ function cmd(c,v){
 }
 function toggleMode(){ cmd('mode',null); }
 
+function setProfileMode(isAuto){
+  var btnAuto=document.getElementById('btnProfAuto');
+  var btnMan=document.getElementById('btnProfMan');
+  if(btnAuto&&btnMan){
+    btnAuto.className=isAuto?'seg-btn active':'seg-btn';
+    btnMan.className=isAuto?'seg-btn':'seg-btn active';
+  }
+  document.querySelectorAll('#modeRow .mode-card').forEach(function(c){
+    c.classList.toggle('disabled',isAuto);
+  });
+  cmd('profile_mode_auto',isAuto);
+}
+
+function selectProfile(val){
+  var card=document.querySelector('#modeRow .mode-card[data-val="'+val+'"]');
+  if(!card || card.classList.contains('disabled'))return;
+  document.querySelectorAll('#modeRow .mode-card').forEach(function(c){
+    c.classList.remove('active');
+  });
+  card.classList.add('active');
+  cmd('manual_profile',val);
+}
+
 function conn(){
   ws=new WebSocket('ws://'+location.hostname+':81/');
   ws.onopen=function(){
@@ -607,6 +681,9 @@ static String build_json() {
     j += "\"fsd_enabled\":";   j += g_state->fsd_enabled             ? "true" : "false"; j += ',';
     j += "\"op_mode\":";       j += (int)g_state->op_mode;            j += ',';
     j += "\"hw_version\":";    j += (int)g_state->hw_version;         j += ',';
+    j += "\"speed_profile\":"; j += (int)g_state->speed_profile;      j += ',';
+    j += "\"profile_mode_auto\":"; j += g_state->profile_mode_auto    ? "true" : "false"; j += ',';
+    j += "\"manual_speed_profile\":"; j += (int)g_state->manual_speed_profile; j += ',';
     j += "\"ota\":";           j += g_state->tesla_ota_in_progress    ? "true" : "false"; j += ',';
     j += "\"nag_killer\":";    j += g_state->nag_killer               ? "true" : "false"; j += ',';
     j += "\"bms_output\":";    j += g_state->bms_output               ? "true" : "false"; j += ',';
@@ -702,6 +779,31 @@ static void ws_event(uint8_t num, WStype_t type,
             g_state->china_mode = (strncmp(vptr, "true", 4) == 0);
             Serial.printf("[Web] China Mode: %s\n", g_state->china_mode ? "ON" : "OFF");
             prefs_save(g_state);
+        }
+    } else if (strstr(buf, "\"profile_mode_auto\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            g_state->profile_mode_auto = (strncmp(vptr, "true", 4) == 0);
+            if (!g_state->profile_mode_auto) {
+                g_state->speed_profile = g_state->manual_speed_profile;
+            }
+            Serial.printf("[Web] Profile Mode: %s\n",
+                g_state->profile_mode_auto ? "Auto (Follow Distance)" : "Manual (Web UI)");
+            prefs_save(g_state);
+        }
+    } else if (strstr(buf, "\"manual_profile\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            int val = atoi(vptr);
+            if (val >= 0 && val <= 4) {
+                g_state->manual_speed_profile = (uint8_t)val;
+                if (!g_state->profile_mode_auto) {
+                    g_state->speed_profile = val;
+                }
+                const char *names[] = {"Chill", "Normal", "Hurry", "Max", "Sloth"};
+                Serial.printf("[Web] Manual Profile: %d (%s)\n", val, names[val]);
+                prefs_save(g_state);
+            }
         }
     } else if (strstr(buf, "\"dump\"")) {
         if (vptr) {
