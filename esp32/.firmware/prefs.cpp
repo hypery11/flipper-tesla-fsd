@@ -14,6 +14,7 @@ void prefs_load(FSDState *state) {
     state->nag_killer               = g_prefs.getBool("nag",    true);
     state->suppress_speed_chime     = g_prefs.getBool("chime",  true);
     state->force_fsd                = g_prefs.getBool("force",  false);
+    state->china_mode               = g_prefs.getBool("china",  false);
     state->tlssc_restore            = g_prefs.getBool("tlssc",  false);
     state->precondition             = g_prefs.getBool("precond",false);
     state->emergency_vehicle_detect = g_prefs.getBool("emrg",   false);
@@ -26,9 +27,29 @@ void prefs_load(FSDState *state) {
     state->wifi_hidden = g_prefs.getBool("wsh", false);
 
     state->op_mode = (OpMode)g_prefs.getUChar("mode", (uint8_t)OpMode_ListenOnly);
+    state->profile_mode_auto = g_prefs.getBool("pauto", true);
+    state->manual_speed_profile = g_prefs.getUChar("mprof", 1);
+    if (state->manual_speed_profile > 4) state->manual_speed_profile = 1;
+    state->hw4_offset = g_prefs.getUChar("hw4off", 0);
+    if (state->hw4_offset > 63) state->hw4_offset = 0;
+    state->hw4_offset_percent_mode = g_prefs.getBool("h4pct", false);
+    for (uint8_t i = 0; i < 3; ++i) {
+        char key[8];
+        snprintf(key, sizeof(key), "h4l%u", i);
+        state->hw4_offset_tier_limit[i] = g_prefs.getUChar(key, state->hw4_offset_tier_limit[i]);
+        snprintf(key, sizeof(key), "h4p%u", i);
+        state->hw4_offset_tier_percent[i] = g_prefs.getUChar(key, state->hw4_offset_tier_percent[i]);
+        if (state->hw4_offset_tier_percent[i] > 100) state->hw4_offset_tier_percent[i] = 100;
+    }
+    if (!state->profile_mode_auto) state->speed_profile = state->manual_speed_profile;
     
-    Serial.printf("[NVS] Loaded: NAG=%d Sleep=%u SSID=\"%s\" HIDDEN=%d\n",
-                  state->nag_killer, state->sleep_idle_ms, state->wifi_ssid, state->wifi_hidden);
+    Serial.printf("[NVS] Loaded: NAG=%d China=%d Profile=%s/%u HW4Off=%u/%s Sleep=%u SSID=\"%s\" HIDDEN=%d\n",
+                  state->nag_killer, state->china_mode,
+                  state->profile_mode_auto ? "Auto" : "Manual",
+                  state->manual_speed_profile, state->hw4_offset,
+                  state->hw4_offset_percent_mode ? "pct" : "fixed",
+                  state->sleep_idle_ms,
+                  state->wifi_ssid, state->wifi_hidden);
     g_prefs.end();
 }
 
@@ -45,6 +66,7 @@ void prefs_save(const FSDState *state) {
     g_prefs.putBool("nag",    state->nag_killer);
     g_prefs.putBool("chime",  state->suppress_speed_chime);
     g_prefs.putBool("force",  state->force_fsd);
+    g_prefs.putBool("china",  state->china_mode);
     g_prefs.putBool("tlssc",  state->tlssc_restore);
     g_prefs.putBool("precond",state->precondition);
     g_prefs.putBool("emrg",   state->emergency_vehicle_detect);
@@ -57,8 +79,24 @@ void prefs_save(const FSDState *state) {
     g_prefs.putBool("wsh",    state->wifi_hidden);
 
     g_prefs.putUChar("mode",  (uint8_t)state->op_mode);
+    g_prefs.putBool("pauto",  state->profile_mode_auto);
+    g_prefs.putUChar("mprof", state->manual_speed_profile);
+    g_prefs.putUChar("hw4off", state->hw4_offset);
+    g_prefs.putBool("h4pct",  state->hw4_offset_percent_mode);
+    for (uint8_t i = 0; i < 3; ++i) {
+        char key[8];
+        snprintf(key, sizeof(key), "h4l%u", i);
+        g_prefs.putUChar(key, state->hw4_offset_tier_limit[i]);
+        snprintf(key, sizeof(key), "h4p%u", i);
+        g_prefs.putUChar(key, state->hw4_offset_tier_percent[i]);
+    }
     
-    Serial.printf("[NVS] Saved: NAG=%d Sleep=%u SSID=\"%s\" HIDDEN=%d\n",
-                  state->nag_killer, state->sleep_idle_ms, state->wifi_ssid, state->wifi_hidden);
+    Serial.printf("[NVS] Saved: NAG=%d China=%d Profile=%s/%u HW4Off=%u/%s Sleep=%u SSID=\"%s\" HIDDEN=%d\n",
+                  state->nag_killer, state->china_mode,
+                  state->profile_mode_auto ? "Auto" : "Manual",
+                  state->manual_speed_profile, state->hw4_offset,
+                  state->hw4_offset_percent_mode ? "pct" : "fixed",
+                  state->sleep_idle_ms,
+                  state->wifi_ssid, state->wifi_hidden);
     g_prefs.end();
 }

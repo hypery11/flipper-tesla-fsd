@@ -30,8 +30,9 @@ static uint8_t read_mux_id(const CanFrame *frame) {
     return frame->data[0] & 0x07;
 }
 
-static bool is_fsd_selected(const CanFrame *frame, bool force_fsd) {
+static bool is_fsd_selected(const CanFrame *frame, bool force_fsd, bool china_mode) {
     if (force_fsd) return true;
+    if (china_mode) return true;
     if (frame->dlc < 5) return false;
     // DAS_autopilotControl byte 4 bits [7:6] = UI "FSD selected" flag (bit 38 in the 64-bit data
     // field).  Note: bit 46 is the *output* FSD-activation bit written to the modified frame —
@@ -43,6 +44,16 @@ static bool is_fsd_selected(const CanFrame *frame, bool force_fsd) {
 
 void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
     memset(state, 0, sizeof(FSDState));
+    state->profile_mode_auto    = true;
+    state->manual_speed_profile = 1;
+    state->hw4_offset           = 0;
+    state->hw4_offset_percent_mode = false;
+    state->hw4_offset_tier_limit[0]   = 30;
+    state->hw4_offset_tier_limit[1]   = 50;
+    state->hw4_offset_tier_limit[2]   = 100;
+    state->hw4_offset_tier_percent[0] = 50;
+    state->hw4_offset_tier_percent[1] = 30;
+    state->hw4_offset_tier_percent[2] = 10;
     fsd_apply_hw_version(state, hw);
     state->op_mode    = OpMode_ListenOnly;  // safe default — never TX on boot
 
@@ -51,6 +62,7 @@ void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
     state->suppress_speed_chime = true;
     state->emergency_vehicle_detect = false;
     state->force_fsd            = false;
+    state->china_mode           = false;
     state->bms_output           = false;
     state->sleep_idle_ms        = SLEEP_IDLE_MS;
 
@@ -61,9 +73,14 @@ void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
 
 void fsd_apply_hw_version(FSDState *state, TeslaHWVersion hw) {
     state->hw_version = hw;
+    if (!state->profile_mode_auto) {
+        state->speed_profile = state->manual_speed_profile;
+        return;
+    }
+
     // Default speed profile per HW version
     if (hw == TeslaHW_HW4)
-        state->speed_profile = 4;
+        state->speed_profile = 1;
     else if (hw == TeslaHW_Legacy)
         state->speed_profile = 1;
     else
@@ -153,7 +170,7 @@ bool fsd_handle_autopilot_frame(FSDState *state, CanFrame *frame) {
         return false;
 
     uint8_t mux     = read_mux_id(frame);
-    bool    fsd_ui  = is_fsd_selected(frame, state->force_fsd);
+    bool    fsd_ui  = is_fsd_selected(frame, state->force_fsd, state->china_mode);
     bool    modified = false;
 
     // mux 0 is the authoritative "is FSD requested" mux
@@ -210,6 +227,33 @@ bool fsd_handle_autopilot_frame(FSDState *state, CanFrame *frame) {
             // Write speed profile into bits 6:4 of byte 7
             frame->data[7] &= ~(uint8_t)(0x07u << 5);
             frame->data[7] |=  (uint8_t)((state->speed_profile & 0x07u) << 5);
+
+            // HW4 speed offset override: byte 1 bits 5:0.
+            // Fixed mode: 0 disables override. Percent mode: write the computed
+            // value when a DAS speed limit is known, even when that value is 0.
+            uint8_t offset = state->hw4_offset;
+            bool write_offset = (offset > 0);
+            if (state->hw4_offset_percent_mode) {
+                offset = 0;
+                write_offset = false;
+                uint16_t limit_kph = (uint16_t)state->das_vision_speed_lim * 5u;
+                if (limit_kph > 0) {
+                    write_offset = true;
+                    uint8_t percent = 0;
+                    for (uint8_t i = 0; i < 3; ++i) {
+                        if (limit_kph <= state->hw4_offset_tier_limit[i]) {
+                            percent = state->hw4_offset_tier_percent[i];
+                            break;
+                        }
+                    }
+                    uint16_t offset_kph = (limit_kph * percent + 50u) / 100u;
+                    offset = (offset_kph > 63u) ? 63u : (uint8_t)offset_kph;
+                }
+            }
+            state->hw4_offset_active = offset;
+            if (write_offset) {
+                frame->data[1] = (frame->data[1] & 0xC0u) | (offset & 0x3Fu);
+            }
             modified = true;
         }
     }
@@ -237,7 +281,7 @@ bool fsd_handle_legacy_autopilot(FSDState *state, CanFrame *frame) {
     if (frame->dlc < 8) return false;
 
     uint8_t mux    = read_mux_id(frame);
-    bool    fsd_ui = is_fsd_selected(frame, state->force_fsd);
+    bool    fsd_ui = is_fsd_selected(frame, state->force_fsd, state->china_mode);
     bool    modified = false;
 
     if (mux == 0) state->fsd_enabled = fsd_ui;
@@ -429,5 +473,7 @@ void fsd_handle_das_status(FSDState *state, const CanFrame *frame) {
     if (frame->dlc < 6) return;
     // DAS_autopilotHandsOnState: bit42|4 LE → byte5 bits[5:2]
     state->das_hands_on_state = (frame->data[5] >> 2) & 0x0Fu;
+    // DAS_visionOnlySpeedLimit: byte2 bits[4:0], raw value is in 5 km/h steps.
+    state->das_vision_speed_lim = frame->data[2] & 0x1Fu;
     state->das_seen = true;
 }

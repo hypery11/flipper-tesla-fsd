@@ -7,17 +7,22 @@
  * All HTML/CSS/JS is embedded as a raw-string literal — no external CDN.
  * State is read directly from the FSDState pointer; controls write back to it.
  *
- * Single-threaded: both handleClient() and ws.loop() are called from loop()
- * after the CAN drain, so there is no concurrency issue.
+ * Web/WiFi work runs in a dedicated FreeRTOS task pinned to Core 0.
+ * CAN work runs separately from main.cpp on Core 1.
  */
 
 #include "web_dashboard.h"
 #include "can_dump.h"
 #include "prefs.h"
+#include "wifi_manager.h"
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 #include <WiFi.h>
 #include <Arduino.h>
+#include <Update.h>
+#include <esp_ota_ops.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 // ── Module state ──────────────────────────────────────────────────────────────
 static FSDState  *g_state = nullptr;   // shared with main
@@ -31,8 +36,11 @@ static uint32_t g_last_rx     = 0;
 static uint32_t g_last_fps_ms = 0;
 static uint32_t g_last_can_seen_ms = 0;
 static float    g_fps         = 0.0f;
+static TaskHandle_t g_web_task_handle = nullptr;
 
 #define CAN_VEHICLE_ALIVE_MS 3000u
+
+static void web_server_task(void *param);
 
 // ── Embedded HTML/CSS/JS ──────────────────────────────────────────────────────
 // Tesla dark theme; mobile-first (max 480 px); WebSocket on :81
@@ -150,6 +158,41 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 input:checked+.sl2{background:var(--accent)}
 input:checked+.sl2:before{transform:translateX(20px);background:#fff}
 
+/* ── Driving profile ── */
+.seg-group{display:inline-flex;gap:4px;background:var(--card2);border-radius:8px;padding:3px}
+.seg-btn{padding:6px 14px;border:none;background:transparent;color:var(--text2);
+  border-radius:6px;cursor:pointer;font-size:.8em}
+.seg-btn.active{background:var(--accent);color:#000;font-weight:600}
+.num-ctrl{display:flex;align-items:center;gap:6px}
+.num-ctrl input{width:70px;background:var(--card2);border:1px solid var(--border);
+  color:var(--text);padding:5px 8px;border-radius:6px;text-align:right}
+.num-ctrl span{font-size:.75em;color:var(--text3)}
+.tier-box{margin-top:10px;display:none}
+.tier-row{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;
+  padding:7px 0;border-top:1px solid rgba(255,255,255,.04)}
+.tier-row:first-child{border-top:0}
+.tier-row input{width:64px;background:var(--card2);border:1px solid var(--border);
+  color:var(--text);padding:5px 7px;border-radius:6px;text-align:right}
+.tier-mid{font-size:.75em;color:var(--text3);white-space:nowrap}
+.mode-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:12px}
+@media(max-width:430px){.mode-row{grid-template-columns:repeat(3,1fr)}}
+.mode-card{background:rgba(255,255,255,.04);border:2px solid rgba(255,255,255,.06);
+  border-radius:8px;padding:10px 6px;text-align:center;cursor:pointer;transition:.2s;min-height:58px}
+.mode-card.active{border-color:var(--accent);background:rgba(0,212,170,.1)}
+.mode-card.disabled{opacity:.35;pointer-events:none}
+.mode-name{font-size:.78em;font-weight:600;line-height:1.25}
+
+/* ── OTA firmware update ── */
+.ota-file{display:none}.ota-progress{display:none;margin-top:12px}
+.ota-track{background:var(--card2);border-radius:8px;height:10px;overflow:hidden}
+.ota-bar{background:var(--accent);height:100%;width:0%;transition:width .2s}
+.ota-status{text-align:center;margin-top:8px;font-size:.85em;color:var(--text2)}
+.ota-bytes{text-align:center;margin-top:4px;font-size:.72em;color:var(--text3)}
+.ota-info{margin-top:10px;padding:10px 12px;background:rgba(77,171,247,.07);
+  border-radius:8px;border:1px solid rgba(77,171,247,.15);font-size:.72em;color:var(--text3);line-height:1.4}
+.btn-blue{background:rgba(77,171,247,.14);color:var(--blue);border:1px solid rgba(77,171,247,.3)}
+.btn-yellow{background:rgba(255,217,61,.14);color:var(--yellow);border:1px solid rgba(255,217,61,.3)}
+
 /* ── Footer ── */
 .foot{text-align:center;padding:16px 0 0;font-size:.64em;color:var(--text3)}
 </style>
@@ -252,6 +295,10 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <label class="sw"><input type="checkbox" id="swFsd" onchange="cmd('force_fsd',this.checked)"><span class="sl2"></span></label>
   </div>
   <div class="row">
+    <span class="lbl">China Mode</span>
+    <label class="sw"><input type="checkbox" id="swChina" onchange="cmd('china_mode',this.checked)"><span class="sl2"></span></label>
+  </div>
+  <div class="row">
     <span class="lbl">TLSSC Restore</span>
     <label class="sw"><input type="checkbox" id="swTlssc" onchange="cmd('tlssc_restore',this.checked)"><span class="sl2"></span></label>
   </div>
@@ -262,6 +309,79 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
   <div class="row">
     <span class="lbl">Deep Sleep (sec)</span>
     <input type="number" id="numSleep" min="10" max="3600" style="width:60px;background:var(--card2);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px;text-align:right" onchange="cmd('sleep',parseInt(this.value)*1000)">
+  </div>
+</div>
+
+<!-- Driving Profile -->
+<div class="card" id="profileCard" style="display:none">
+  <div class="card-head"><div class="icon ic-c">P</div><h2>Driving Profile</h2></div>
+  <div class="row">
+    <span class="lbl">Profile Source</span>
+    <div class="seg-group">
+      <button class="seg-btn active" id="btnProfAuto" onclick="setProfileMode(true)">Auto</button>
+      <button class="seg-btn" id="btnProfMan" onclick="setProfileMode(false)">Manual</button>
+    </div>
+  </div>
+  <div class="mode-row" id="modeRow">
+    <div class="mode-card" data-val="3" onclick="selectProfile(3)"><div class="mode-name">Max</div></div>
+    <div class="mode-card" data-val="2" onclick="selectProfile(2)"><div class="mode-name">Hurry</div></div>
+    <div class="mode-card active" data-val="1" onclick="selectProfile(1)"><div class="mode-name">Normal</div></div>
+    <div class="mode-card" data-val="0" onclick="selectProfile(0)"><div class="mode-name">Chill</div></div>
+    <div class="mode-card" data-val="4" onclick="selectProfile(4)"><div class="mode-name">Sloth</div></div>
+  </div>
+  <div class="row">
+    <span class="lbl">Offset Mode</span>
+    <div class="seg-group">
+      <button class="seg-btn active" id="btnOffFixed" onclick="setOffsetMode(false)">Fixed</button>
+      <button class="seg-btn" id="btnOffPct" onclick="setOffsetMode(true)">%</button>
+    </div>
+  </div>
+  <div class="row" id="fixedOffsetRow">
+    <span class="lbl">Fixed Offset</span>
+    <div class="num-ctrl">
+      <input type="number" id="numHw4Offset" min="0" max="63" step="1" onchange="setHw4Offset(this.value)">
+      <span>km/h</span>
+    </div>
+  </div>
+  <div class="row">
+    <span class="lbl">Current Limit</span>
+    <span id="dasLimit" style="font-size:.85em;color:var(--text2)">--</span>
+  </div>
+  <div class="row">
+    <span class="lbl">Active Offset</span>
+    <span id="activeOffset" style="font-size:.85em;color:var(--text2)">--</span>
+  </div>
+  <div class="tier-box" id="pctOffsetBox">
+    <div class="tier-row">
+      <span class="lbl">Limit 1</span>
+      <span class="tier-mid">&le;</span>
+      <div class="num-ctrl"><input type="number" id="tierLimit0" min="0" max="155" step="5" onchange="setHw4Tier(0,'limit',this.value)"><span>km/h</span></div>
+    </div>
+    <div class="tier-row">
+      <span class="lbl">Offset 1</span>
+      <span class="tier-mid">+</span>
+      <div class="num-ctrl"><input type="number" id="tierPct0" min="0" max="100" step="1" onchange="setHw4Tier(0,'percent',this.value)"><span>%</span></div>
+    </div>
+    <div class="tier-row">
+      <span class="lbl">Limit 2</span>
+      <span class="tier-mid">&le;</span>
+      <div class="num-ctrl"><input type="number" id="tierLimit1" min="0" max="155" step="5" onchange="setHw4Tier(1,'limit',this.value)"><span>km/h</span></div>
+    </div>
+    <div class="tier-row">
+      <span class="lbl">Offset 2</span>
+      <span class="tier-mid">+</span>
+      <div class="num-ctrl"><input type="number" id="tierPct1" min="0" max="100" step="1" onchange="setHw4Tier(1,'percent',this.value)"><span>%</span></div>
+    </div>
+    <div class="tier-row">
+      <span class="lbl">Limit 3</span>
+      <span class="tier-mid">&le;</span>
+      <div class="num-ctrl"><input type="number" id="tierLimit2" min="0" max="155" step="5" onchange="setHw4Tier(2,'limit',this.value)"><span>km/h</span></div>
+    </div>
+    <div class="tier-row">
+      <span class="lbl">Offset 3</span>
+      <span class="tier-mid">+</span>
+      <div class="num-ctrl"><input type="number" id="tierPct2" min="0" max="100" step="1" onchange="setHw4Tier(2,'percent',this.value)"><span>%</span></div>
+    </div>
   </div>
 </div>
 
@@ -281,6 +401,29 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <label class="sw"><input type="checkbox" id="swWifiHid"><span class="sl2"></span></label>
   </div>
   <button class="btn-main btn-stop" onclick="saveWifi()" style="margin-top:12px">SAVE & RESTART WIFI</button>
+</div>
+
+<!-- OTA Update -->
+<div class="card">
+  <div class="card-head"><div class="icon ic-c">U</div><h2>OTA Firmware Update</h2></div>
+  <div style="font-size:.75em;color:var(--text3);margin-bottom:12px;line-height:1.5">
+    Upload a .bin firmware file. Device will reboot after a successful update.
+  </div>
+  <form id="otaForm" enctype="multipart/form-data" style="margin:0">
+    <input type="file" id="otaFile" class="ota-file" accept=".bin" onchange="uploadFirmware()">
+    <button type="button" class="btn-main btn-blue" id="otaSelectBtn" onclick="document.getElementById('otaFile').click()">
+      SELECT FIRMWARE (.bin)
+    </button>
+  </form>
+  <div id="otaProgress" class="ota-progress">
+    <div class="ota-track"><div id="otaBar" class="ota-bar"></div></div>
+    <div id="otaStatus" class="ota-status">Preparing...</div>
+    <div id="otaBytes" class="ota-bytes"></div>
+  </div>
+  <div id="otaRollbackInfo" class="ota-info">
+    <b style="color:var(--blue)">Partition Safety</b><br>
+    OTA writes to the next app partition when available. Keep USB reflashing available as a recovery path.
+  </div>
 </div>
 
 <!-- SD Card -->
@@ -309,6 +452,11 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <span class="lbl">WiFi Clients</span>
     <span id="wifiCl">--</span>
   </div>
+  <div class="row">
+    <span class="lbl">OTA Partition</span>
+    <span id="otaPartInfo" style="font-size:.78em;color:var(--text2)">--</span>
+  </div>
+  <button class="btn-main btn-yellow" onclick="restartDevice()" style="margin-top:12px">RESTART DEVICE</button>
 </div>
 
 <div class="foot">Tesla FSD ESP32 &middot; M5Stack ATOM Lite + ATOMIC CAN Base</div>
@@ -377,6 +525,7 @@ function upd(d){
   if(document.getElementById('swNag')) document.getElementById('swNag').checked=d.nag_killer;
   if(document.getElementById('swBms')) document.getElementById('swBms').checked=d.bms_output;
   if(document.getElementById('swFsd')) document.getElementById('swFsd').checked=d.force_fsd;
+  if(document.getElementById('swChina')) document.getElementById('swChina').checked=d.china_mode;
   if(document.getElementById('swTlssc')) document.getElementById('swTlssc').checked=d.tlssc_restore;
   if(document.getElementById('swDump')) document.getElementById('swDump').checked=!!d.can_dump;
   
@@ -384,6 +533,40 @@ function upd(d){
     document.getElementById('numSleep').value=Math.floor((d.sleep_ms||0)/1000);
   
   pill('dumpSt',d.can_dump,d.can_dump?'Recording':'Idle');
+
+  // Driving profile (HW4 only)
+  var profCard=document.getElementById('profileCard');
+  if(profCard) profCard.style.display=(d.hw_version===3)?'block':'none';
+  if(d.profile_mode_auto!==undefined){
+    var btnAuto=document.getElementById('btnProfAuto');
+    var btnMan=document.getElementById('btnProfMan');
+    if(btnAuto&&btnMan){
+      btnAuto.className=d.profile_mode_auto?'seg-btn active':'seg-btn';
+      btnMan.className=d.profile_mode_auto?'seg-btn':'seg-btn active';
+    }
+    document.querySelectorAll('#modeRow .mode-card').forEach(function(c){
+      c.classList.toggle('disabled',d.profile_mode_auto);
+    });
+  }
+  var activeProfile=d.profile_mode_auto?d.speed_profile:d.manual_speed_profile;
+  document.querySelectorAll('#modeRow .mode-card').forEach(function(c){
+    c.classList.toggle('active',c.dataset.val===String(activeProfile));
+  });
+  var hw4off=document.getElementById('numHw4Offset');
+  if(hw4off && document.activeElement.id!=='numHw4Offset' && d.hw4_offset!==undefined){
+    hw4off.value=d.hw4_offset;
+  }
+  if(d.hw4_offset_percent_mode!==undefined) syncOffsetMode(!!d.hw4_offset_percent_mode);
+  for(var ti=0;ti<3;ti++){
+    var lim=document.getElementById('tierLimit'+ti);
+    var pct=document.getElementById('tierPct'+ti);
+    if(lim && document.activeElement.id!==lim.id && d['hw4_tier'+ti+'_limit']!==undefined) lim.value=d['hw4_tier'+ti+'_limit'];
+    if(pct && document.activeElement.id!==pct.id && d['hw4_tier'+ti+'_percent']!==undefined) pct.value=d['hw4_tier'+ti+'_percent'];
+  }
+  var dasLimit=document.getElementById('dasLimit');
+  if(dasLimit) dasLimit.textContent=(d.das_speed_limit_kph>0)?(d.das_speed_limit_kph+' km/h'):'--';
+  var activeOffset=document.getElementById('activeOffset');
+  if(activeOffset) activeOffset.textContent=(d.hw4_offset_active||0)+' km/h';
 
   // CAN stats
   if(document.getElementById('rxCnt')) document.getElementById('rxCnt').textContent=(d.rx_count||0).toLocaleString();
@@ -412,6 +595,40 @@ function upd(d){
   if(document.getElementById('fwBuild')) document.getElementById('fwBuild').textContent=d.fw_build;
   if(document.getElementById('uptime')) document.getElementById('uptime').textContent=fmt(d.uptime_s||0);
   if(document.getElementById('wifiCl')) document.getElementById('wifiCl').textContent=d.wifi_clients||0;
+  var partEl=document.getElementById('otaPartInfo');
+  if(partEl && d.ota_partition){
+    var p=d.ota_partition;
+    var stateStr=(p.state===0)?'New':(p.state===1)?'Pending':(p.state===2)?'Valid':(p.state===3)?'Invalid':'State '+p.state;
+    partEl.textContent=p.running+' ('+stateStr+') - '+(p.has_ota?'OTA capable':'No OTA partition');
+    var info=document.getElementById('otaRollbackInfo');
+    if(info && !p.has_ota){
+      info.innerHTML='<b style="color:var(--red)">No OTA Partition</b><br>This build appears to be running from a factory/single app partition. Use an OTA partition table before relying on Web updates.';
+    }
+  }
+}
+
+function uploadFirmware(){
+  var input=document.getElementById('otaFile');
+  var file=input.files[0];
+  if(!file)return;
+  if(!file.name.endsWith('.bin')){alert('Error: Please select a .bin firmware file');input.value='';return;}
+  var MAX_SIZE=16*1024*1024;
+  if(file.size>MAX_SIZE){alert('Error: Firmware file too large (max 16MB)');input.value='';return;}
+  if(file.size<32768 && !confirm('Warning: This file is very small ('+Math.round(file.size/1024)+' KB).\nAre you sure it is a valid ESP32 firmware?')){input.value='';return;}
+  if(!confirm('Flash firmware: '+file.name+' ('+Math.round(file.size/1024)+' KB)?\n\nDevice will reboot after update.')){input.value='';return;}
+  var prog=document.getElementById('otaProgress'),bar=document.getElementById('otaBar'),status=document.getElementById('otaStatus'),bytes=document.getElementById('otaBytes'),btn=document.getElementById('otaSelectBtn');
+  prog.style.display='block';bar.style.width='0%';bar.style.background='var(--accent)';status.textContent='Uploading firmware...';status.style.color='var(--text2)';bytes.textContent='0 / '+Math.round(file.size/1024)+' KB';btn.disabled=true;btn.style.opacity='.5';
+  var xhr=new XMLHttpRequest();
+  xhr.upload.addEventListener('progress',function(e){if(e.lengthComputable){var pct=Math.round((e.loaded/e.total)*100);bar.style.width=pct+'%';status.textContent='Uploading: '+pct+'%';bytes.textContent=Math.round(e.loaded/1024)+' / '+Math.round(e.total/1024)+' KB';}});
+  xhr.addEventListener('load',function(){btn.disabled=false;btn.style.opacity='1';if(xhr.status===200&&xhr.responseText==='OK'){bar.style.width='100%';status.textContent='Upload complete - rebooting...';status.style.color='var(--accent)';var c=8;var t=setInterval(function(){c--;bytes.textContent='Reconnecting in '+c+'s...';if(c<=0){clearInterval(t);location.reload();}},1000);}else{bar.style.background='var(--red)';status.textContent='Update failed';status.style.color='var(--red)';bytes.textContent='Server response: '+(xhr.responseText||xhr.statusText||'Unknown error');input.value='';}});
+  xhr.addEventListener('error',function(){btn.disabled=false;btn.style.opacity='1';bar.style.background='var(--red)';status.textContent='Connection lost during upload';status.style.color='var(--red)';bytes.textContent='Check WiFi connection and try again';input.value='';});
+  xhr.addEventListener('timeout',function(){btn.disabled=false;btn.style.opacity='1';bar.style.background='var(--yellow)';status.textContent='Upload timed out';status.style.color='var(--yellow)';bytes.textContent='The device may have rebooted - check if new firmware is running';input.value='';});
+  var fd=new FormData();fd.append('firmware',file);xhr.open('POST','/update',true);xhr.timeout=120000;xhr.send(fd);
+}
+
+function restartDevice(){
+  if(!confirm('Restart the device now?'))return;
+  fetch('/restart').then(function(){setTimeout(function(){location.reload();},8000);}).catch(function(){setTimeout(function(){location.reload();},8000);});
 }
 
 function sdFormat(){
@@ -447,6 +664,72 @@ function cmd(c,v){
   }
 }
 function toggleMode(){ cmd('mode',null); }
+
+function setProfileMode(isAuto){
+  var btnAuto=document.getElementById('btnProfAuto');
+  var btnMan=document.getElementById('btnProfMan');
+  if(btnAuto&&btnMan){
+    btnAuto.className=isAuto?'seg-btn active':'seg-btn';
+    btnMan.className=isAuto?'seg-btn':'seg-btn active';
+  }
+  document.querySelectorAll('#modeRow .mode-card').forEach(function(c){
+    c.classList.toggle('disabled',isAuto);
+  });
+  cmd('profile_mode_auto',isAuto);
+}
+
+function selectProfile(val){
+  var card=document.querySelector('#modeRow .mode-card[data-val="'+val+'"]');
+  if(!card || card.classList.contains('disabled'))return;
+  document.querySelectorAll('#modeRow .mode-card').forEach(function(c){
+    c.classList.remove('active');
+  });
+  card.classList.add('active');
+  cmd('manual_profile',val);
+}
+
+function setHw4Offset(value){
+  var val=parseInt(value,10);
+  if(isNaN(val))val=0;
+  if(val<0)val=0;
+  if(val>63)val=63;
+  var input=document.getElementById('numHw4Offset');
+  if(input)input.value=val;
+  cmd('hw4_offset',val);
+}
+
+function syncOffsetMode(percent){
+  var btnFixed=document.getElementById('btnOffFixed');
+  var btnPct=document.getElementById('btnOffPct');
+  var fixedRow=document.getElementById('fixedOffsetRow');
+  var pctBox=document.getElementById('pctOffsetBox');
+  if(btnFixed&&btnPct){
+    btnFixed.className=percent?'seg-btn':'seg-btn active';
+    btnPct.className=percent?'seg-btn active':'seg-btn';
+  }
+  if(fixedRow)fixedRow.style.display=percent?'none':'flex';
+  if(pctBox)pctBox.style.display=percent?'block':'none';
+}
+
+function setOffsetMode(percent){
+  syncOffsetMode(percent);
+  cmd('hw4_offset_percent_mode',!!percent);
+}
+
+function setHw4Tier(idx,field,value){
+  var val=parseInt(value,10);
+  if(isNaN(val))val=0;
+  if(field==='limit'){
+    if(val<0)val=0;
+    if(val>155)val=155;
+  }else{
+    if(val<0)val=0;
+    if(val>100)val=100;
+  }
+  var input=document.getElementById((field==='limit'?'tierLimit':'tierPct')+idx);
+  if(input)input.value=val;
+  cmd('hw4_tier'+idx+'_'+field,val);
+}
 
 function conn(){
   ws=new WebSocket('ws://'+location.hostname+':81/');
@@ -503,20 +786,46 @@ static String build_json() {
         strcpy(bms, "{\"seen\":false}");
     }
 
+    char ota_part[128] = {};
+    {
+        const esp_partition_t *running = esp_ota_get_running_partition();
+        const char *running_label = running ? running->label : "unknown";
+        esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
+        if (running) esp_ota_get_state_partition(running, &ota_state);
+        bool has_ota = (running &&
+            (running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0 ||
+             running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1));
+        snprintf(ota_part, sizeof(ota_part),
+            "{\"running\":\"%s\",\"state\":%d,\"has_ota\":%s}",
+            running_label, (int)ota_state, has_ota ? "true" : "false");
+    }
+
     // fps as fixed-point string
     char fps_s[12];
     snprintf(fps_s, sizeof(fps_s), "%.1f", g_fps);
 
     String j;
-    j.reserve(512);
+    j.reserve(1152);
     j  = "{";
     j += "\"fsd_enabled\":";   j += g_state->fsd_enabled             ? "true" : "false"; j += ',';
     j += "\"op_mode\":";       j += (int)g_state->op_mode;            j += ',';
     j += "\"hw_version\":";    j += (int)g_state->hw_version;         j += ',';
+    j += "\"speed_profile\":"; j += (int)g_state->speed_profile;      j += ',';
+    j += "\"profile_mode_auto\":"; j += g_state->profile_mode_auto    ? "true" : "false"; j += ',';
+    j += "\"manual_speed_profile\":"; j += (int)g_state->manual_speed_profile; j += ',';
+    j += "\"hw4_offset\":";    j += (int)g_state->hw4_offset;          j += ',';
+    j += "\"hw4_offset_percent_mode\":"; j += g_state->hw4_offset_percent_mode ? "true" : "false"; j += ',';
+    j += "\"hw4_offset_active\":"; j += (int)g_state->hw4_offset_active; j += ',';
+    j += "\"das_speed_limit_kph\":"; j += (int)g_state->das_vision_speed_lim * 5; j += ',';
+    for (uint8_t i = 0; i < 3; ++i) {
+        j += "\"hw4_tier"; j += i; j += "_limit\":"; j += (int)g_state->hw4_offset_tier_limit[i]; j += ',';
+        j += "\"hw4_tier"; j += i; j += "_percent\":"; j += (int)g_state->hw4_offset_tier_percent[i]; j += ',';
+    }
     j += "\"ota\":";           j += g_state->tesla_ota_in_progress    ? "true" : "false"; j += ',';
     j += "\"nag_killer\":";    j += g_state->nag_killer               ? "true" : "false"; j += ',';
     j += "\"bms_output\":";    j += g_state->bms_output               ? "true" : "false"; j += ',';
     j += "\"force_fsd\":";     j += g_state->force_fsd                ? "true" : "false"; j += ',';
+    j += "\"china_mode\":";    j += g_state->china_mode               ? "true" : "false"; j += ',';
     j += "\"tlssc_restore\":"; j += g_state->tlssc_restore            ? "true" : "false"; j += ',';
     j += "\"can_vehicle_detected\":"; j += can_vehicle_detected       ? "true" : "false"; j += ',';
     j += "\"bms_hv_seen\":";   j += g_state->seen_bms_hv;              j += ',';
@@ -534,7 +843,8 @@ static String build_json() {
     j += "\"wifi_ssid\":\"";  j += json_escape(g_state->wifi_ssid);   j += "\",";
     j += "\"wifi_pass\":\"***\",";
     j += "\"wifi_hidden\":";  j += g_state->wifi_hidden               ? "true" : "false"; j += ',';
-    j += "\"wifi_clients\":";  j += (int)WiFi.softAPgetStationNum();
+    j += "\"wifi_clients\":";  j += (int)WiFi.softAPgetStationNum();   j += ',';
+    j += "\"ota_partition\":"; j += ota_part;
     j += '}';
     return j;
 }
@@ -598,6 +908,82 @@ static void ws_event(uint8_t num, WStype_t type,
             while (*vptr == ' ' || *vptr == ':') vptr++;
             g_state->force_fsd = (strncmp(vptr, "true", 4) == 0);
             Serial.printf("[Web] Force FSD: %s\n", g_state->force_fsd ? "ON" : "OFF");
+            prefs_save(g_state);
+        }
+    } else if (strstr(buf, "\"china_mode\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            g_state->china_mode = (strncmp(vptr, "true", 4) == 0);
+            Serial.printf("[Web] China Mode: %s\n", g_state->china_mode ? "ON" : "OFF");
+            prefs_save(g_state);
+        }
+    } else if (strstr(buf, "\"profile_mode_auto\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            g_state->profile_mode_auto = (strncmp(vptr, "true", 4) == 0);
+            if (!g_state->profile_mode_auto) {
+                g_state->speed_profile = g_state->manual_speed_profile;
+            }
+            Serial.printf("[Web] Profile Mode: %s\n",
+                g_state->profile_mode_auto ? "Auto (Follow Distance)" : "Manual (Web UI)");
+            prefs_save(g_state);
+        }
+    } else if (strstr(buf, "\"manual_profile\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            int val = atoi(vptr);
+            if (val >= 0 && val <= 4) {
+                g_state->manual_speed_profile = (uint8_t)val;
+                if (!g_state->profile_mode_auto) {
+                    g_state->speed_profile = val;
+                }
+                const char *names[] = {"Chill", "Normal", "Hurry", "Max", "Sloth"};
+                Serial.printf("[Web] Manual Profile: %d (%s)\n", val, names[val]);
+                prefs_save(g_state);
+            }
+        }
+    } else if (strstr(buf, "\"hw4_offset_percent_mode\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            g_state->hw4_offset_percent_mode = (strncmp(vptr, "true", 4) == 0);
+            Serial.printf("[Web] HW4 Offset Mode: %s\n",
+                g_state->hw4_offset_percent_mode ? "Percent" : "Fixed");
+            prefs_save(g_state);
+        }
+    } else if (strstr(buf, "\"hw4_tier")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            int val = atoi(vptr);
+            for (uint8_t i = 0; i < 3; ++i) {
+                char key[28];
+                snprintf(key, sizeof(key), "\"hw4_tier%u_limit\"", i);
+                if (strstr(buf, key)) {
+                    if (val < 0) val = 0;
+                    if (val > 155) val = 155;
+                    g_state->hw4_offset_tier_limit[i] = (uint8_t)val;
+                    Serial.printf("[Web] HW4 Offset Tier %u Limit: %d km/h\n", i + 1, val);
+                    prefs_save(g_state);
+                    break;
+                }
+                snprintf(key, sizeof(key), "\"hw4_tier%u_percent\"", i);
+                if (strstr(buf, key)) {
+                    if (val < 0) val = 0;
+                    if (val > 100) val = 100;
+                    g_state->hw4_offset_tier_percent[i] = (uint8_t)val;
+                    Serial.printf("[Web] HW4 Offset Tier %u Percent: %d%%\n", i + 1, val);
+                    prefs_save(g_state);
+                    break;
+                }
+            }
+        }
+    } else if (strstr(buf, "\"hw4_offset\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            int val = atoi(vptr);
+            if (val < 0) val = 0;
+            if (val > 63) val = 63;
+            g_state->hw4_offset = (uint8_t)val;
+            Serial.printf("[Web] HW4 Speed Offset: %d km/h\n", val);
             prefs_save(g_state);
         }
     } else if (strstr(buf, "\"dump\"")) {
@@ -675,9 +1061,125 @@ static void handle_status() {
     g_http.send(200, "application/json", build_json());
 }
 
+static void handle_captive_portal() {
+    String ip = WiFi.softAPIP().toString();
+    String host = g_http.hostHeader();
+    if (host.length() > 0 && host != ip && host != ip + ":80") {
+        g_http.sendHeader("Location", "http://" + ip + "/", true);
+        g_http.send(302, "text/plain", "");
+        return;
+    }
+    handle_root();
+}
+
 static void handle_sdformat() {
     String result = sd_format_card();
     g_http.send(200, "application/json", result);
+}
+
+static void handle_restart() {
+    g_http.send(200, "text/plain", "OK");
+    delay(500);
+    ESP.restart();
+}
+
+// ── OTA Update handlers ───────────────────────────────────────────────────────
+static size_t ota_total_size = 0;
+static bool ota_error_flag = false;
+
+static void handle_ota_upload() {
+    HTTPUpload& upload = g_http.upload();
+
+    if (upload.status == UPLOAD_FILE_START) {
+        Serial.printf("[OTA] Start: %s\n", upload.filename.c_str());
+        ota_error_flag = false;
+        ota_total_size = 0;
+
+        if (!upload.filename.endsWith(".bin")) {
+            Serial.println("[OTA] ERROR: File must be .bin");
+            ota_error_flag = true;
+            return;
+        }
+
+        size_t max_size = UPDATE_SIZE_UNKNOWN;
+        const esp_partition_t* partition = esp_ota_get_next_update_partition(NULL);
+        if (partition != NULL) {
+            max_size = partition->size;
+            Serial.printf("[OTA] Target partition: %s, size: %u bytes\n",
+                partition->label, (unsigned)max_size);
+        }
+
+        if (!Update.begin(max_size, U_FLASH)) {
+            Update.printError(Serial);
+            Serial.println("[OTA] ERROR: Update.begin() failed");
+            ota_error_flag = true;
+            return;
+        }
+
+        Serial.println("[OTA] Update started successfully");
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+        if (ota_error_flag) return;
+
+        size_t written = Update.write(upload.buf, upload.currentSize);
+        if (written != upload.currentSize) {
+            Update.printError(Serial);
+            Serial.printf("[OTA] ERROR: Write failed, expected %u, wrote %u\n",
+                upload.currentSize, (unsigned)written);
+            ota_error_flag = true;
+            return;
+        }
+
+        ota_total_size = upload.totalSize;
+        if (ota_total_size % 65536 == 0) {
+            Serial.printf("[OTA] Progress: %u bytes\n", (unsigned)ota_total_size);
+        }
+    } else if (upload.status == UPLOAD_FILE_END) {
+        if (ota_error_flag) {
+            Serial.println("[OTA] Upload aborted due to previous error");
+            Update.abort();
+            return;
+        }
+
+        if (Update.end(true)) {
+            Serial.printf("[OTA] Success: %u bytes total\n", (unsigned)ota_total_size);
+            if (!Update.isFinished()) {
+                Serial.println("[OTA] ERROR: Update not finished properly");
+                ota_error_flag = true;
+            }
+        } else {
+            Update.printError(Serial);
+            Serial.println("[OTA] ERROR: Update.end() failed");
+            ota_error_flag = true;
+        }
+    } else if (upload.status == UPLOAD_FILE_ABORTED) {
+        Serial.println("[OTA] Upload aborted by client");
+        Update.abort();
+        ota_error_flag = true;
+    }
+}
+
+static void handle_ota_done() {
+    if (ota_error_flag || Update.hasError()) {
+        String error_msg = "FAIL: ";
+        if (Update.hasError()) {
+            error_msg += "Error code " + String(Update.getError());
+        } else {
+            error_msg += "Upload error";
+        }
+
+        Serial.printf("[OTA] %s\n", error_msg.c_str());
+        g_http.send(500, "text/plain", error_msg);
+        Update.abort();
+        return;
+    }
+
+    g_http.send(200, "text/plain", "OK");
+
+    Serial.println("[OTA] Firmware update successful!");
+    Serial.println("[OTA] Rebooting in 2 seconds...");
+
+    delay(2000);
+    ESP.restart();
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -689,34 +1191,74 @@ void web_dashboard_init(FSDState *state, CanDriver *can) {
     g_last_rx     = state ? state->rx_count : 0;
     g_last_can_seen_ms = (state && state->rx_count > 0) ? millis() : 0;
 
-    g_http.on("/",           HTTP_GET, handle_root);
-    g_http.on("/api/status", HTTP_GET, handle_status);
-    g_http.on("/sdformat",   HTTP_GET, handle_sdformat);
+    g_http.on("/",           HTTP_GET,  handle_root);
+    g_http.on("/api/status", HTTP_GET,  handle_status);
+    g_http.on("/sdformat",   HTTP_GET,  handle_sdformat);
+    g_http.on("/restart",    HTTP_GET,  handle_restart);
+    g_http.on("/update",     HTTP_POST, handle_ota_done, handle_ota_upload);
+    g_http.on("/generate_204", HTTP_GET, handle_captive_portal);
+    g_http.on("/gen_204", HTTP_GET, handle_captive_portal);
+    g_http.on("/hotspot-detect.html", HTTP_GET, handle_captive_portal);
+    g_http.on("/library/test/success.html", HTTP_GET, handle_captive_portal);
+    g_http.on("/connecttest.txt", HTTP_GET, handle_captive_portal);
+    g_http.on("/redirect", HTTP_GET, handle_captive_portal);
+    g_http.on("/success.txt", HTTP_GET, handle_captive_portal);
+    g_http.on("/fwlink", HTTP_GET, handle_captive_portal);
+    g_http.onNotFound(handle_captive_portal);
     g_http.begin();
 
     g_ws.begin();
     g_ws.onEvent(ws_event);
 
+    if (g_web_task_handle == nullptr) {
+        BaseType_t web_task_ok = xTaskCreatePinnedToCore(
+            web_server_task,
+            "WebServer",
+            8192,
+            nullptr,
+            1,
+            &g_web_task_handle,
+            0);
+        if (web_task_ok == pdPASS) {
+            Serial.println("[Web] Task created on Core 0");
+        } else {
+            Serial.println("[Web] ERROR: could not create Core 0 task");
+            g_web_task_handle = nullptr;
+        }
+    }
+
     Serial.println("[Web] HTTP :80  WS :81 — ready");
 }
 
-void web_dashboard_update() {
-    if (g_state == nullptr) return;   // init was never called (WiFi failed)
+static void web_server_task(void *param) {
+    (void)param;
+    Serial.printf("[Web] Task started on Core %d\n", xPortGetCoreID());
 
-    g_http.handleClient();
-    g_ws.loop();
+    while (true) {
+        if (g_state != nullptr) {
+            wifi_process_dns();
+            g_http.handleClient();
+            g_ws.loop();
 
-    // FPS calculation + 1 Hz WebSocket broadcast
-    uint32_t now = millis();
-    if ((now - g_last_fps_ms) >= 1000u) {
-        uint32_t rx = g_state->rx_count;
-        float    dt = (now - g_last_fps_ms) / 1000.0f;
-        if (rx != g_last_rx) g_last_can_seen_ms = now;
-        g_fps        = (float)(rx - g_last_rx) / dt;
-        g_last_rx    = rx;
-        g_last_fps_ms = now;
+            // FPS calculation + 1 Hz WebSocket broadcast
+            uint32_t now = millis();
+            if ((now - g_last_fps_ms) >= 1000u) {
+                uint32_t rx = g_state->rx_count;
+                float    dt = (now - g_last_fps_ms) / 1000.0f;
+                if (rx != g_last_rx) g_last_can_seen_ms = now;
+                g_fps        = (float)(rx - g_last_rx) / dt;
+                g_last_rx    = rx;
+                g_last_fps_ms = now;
 
-        String json = build_json();
-        g_ws.broadcastTXT(json.c_str(), json.length());
+                String json = build_json();
+                g_ws.broadcastTXT(json.c_str(), json.length());
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
+}
+
+void web_dashboard_update() {
+    // Web work runs in web_server_task on Core 0.
 }

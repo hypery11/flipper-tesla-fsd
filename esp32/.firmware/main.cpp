@@ -16,6 +16,9 @@
 
 #include <Arduino.h>
 #include <esp_sleep.h>
+#include <esp_ota_ops.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include "config.h"
 #include "fsd_handler.h"
 #include "can_driver.h"
@@ -26,6 +29,7 @@
 #include "prefs.h"
 
 // ── Globals ───────────────────────────────────────────────────────────────────
+static TaskHandle_t g_can_task_handle = nullptr;
 static CanDriver *g_can   = nullptr;
 static FSDState   g_state = {};
 
@@ -273,7 +277,9 @@ static void process_frame(const CanFrame &frame) {
 
     // Follow distance → speed_profile (0x3F8), no TX
     if (frame.id == CAN_ID_FOLLOW_DIST) {
-        fsd_handle_follow_distance(&g_state, &frame);
+        if (g_state.profile_mode_auto) {
+            fsd_handle_follow_distance(&g_state, &frame);
+        }
         return;
     }
 
@@ -318,6 +324,102 @@ static void sleep_tick(uint32_t now) {
 }
 #endif
 
+// ── CAN task (Core 1) ─────────────────────────────────────────────────────────
+static void can_task(void *param) {
+    (void)param;
+    Serial.printf("[CAN] Task started on Core %d\n", xPortGetCoreID());
+
+    while (true) {
+        uint32_t now = millis();
+
+        if (g_factory_reset_window && now >= FACTORY_RESET_WINDOW_MS) {
+            g_factory_reset_window = false;
+            Serial.println("[BTN] Factory reset window closed");
+        }
+
+        button_tick();
+
+        // Drain all available CAN frames in one shot
+        CanFrame frame;
+        while (g_can->receive(frame)) {
+            process_frame(frame);
+        }
+
+        // ── Periodic error counter refresh (~every 250 ms) ────────────────────
+        static uint32_t last_err_ms = 0;
+        if ((now - last_err_ms) >= 250u) {
+            g_state.crc_err_count = g_can->errorCount();
+            last_err_ms = now;
+        }
+
+        // ── Precondition frame injection ──────────────────────────────────────
+        static uint32_t last_precond_ms = 0;
+        if (g_state.precondition && fsd_can_transmit(&g_state) &&
+            (now - last_precond_ms) >= PRECOND_INTERVAL_MS) {
+            CanFrame pf;
+            fsd_build_precondition_frame(&pf);
+            g_can->send(pf);
+            last_precond_ms = now;
+        }
+
+        // ── BMS serial output ─────────────────────────────────────────────────
+        static uint32_t last_bms_ms = 0;
+        if (g_state.bms_output && g_state.bms_seen &&
+            (now - last_bms_ms) >= BMS_PRINT_MS) {
+            float kw = g_state.pack_voltage_v * g_state.pack_current_a / 1000.0f;
+            Serial.printf("[BMS] %.1fV  %.1fA  %.2fkW  SoC:%.1f%%  Temp:%d~%d°C\n",
+                g_state.pack_voltage_v,
+                g_state.pack_current_a,
+                kw,
+                g_state.soc_percent,
+                (int)g_state.batt_temp_min_c,
+                (int)g_state.batt_temp_max_c);
+            last_bms_ms = now;
+        }
+
+        // ── Active-mode status line ───────────────────────────────────────────
+        static uint32_t last_status_ms = 0;
+        if (g_state.op_mode == OpMode_Active &&
+            (now - last_status_ms) >= STATUS_PRINT_MS) {
+            const char *hw_str =
+                (g_state.hw_version == TeslaHW_HW4)    ? "HW4"    :
+                (g_state.hw_version == TeslaHW_HW3)    ? "HW3"    :
+                (g_state.hw_version == TeslaHW_Legacy)  ? "Legacy" : "?";
+            Serial.printf(
+                "[STA] HW:%-6s FSD:%-4s NAG:%-10s OTA:%-3s "
+                "Profile:%d  RX:%lu TX:%lu Err:%lu\n",
+                hw_str,
+                g_state.fsd_enabled     ? "ON"         : "wait",
+                g_state.nag_suppressed  ? "suppressed"  : "active",
+                g_state.tesla_ota_in_progress ? "YES"  : "no",
+                g_state.speed_profile,
+                (unsigned long)g_state.rx_count,
+                (unsigned long)g_state.frames_modified,
+                (unsigned long)g_state.crc_err_count);
+            last_status_ms = now;
+        }
+
+        // ── Wiring sanity warning ─────────────────────────────────────────────
+        static uint32_t last_warn_ms = 0;
+        if (g_state.rx_count == 0 && now > WIRING_WARN_MS &&
+            (now - last_warn_ms) >= 2000u) {
+            Serial.println("[WARN] No CAN traffic after 5 s — check wiring");
+            Serial.println("[WARN] Verify CAN-H on OBD pin 6, CAN-L on pin 14");
+            last_warn_ms = now;
+        }
+
+        can_dump_tick(now);
+
+#if defined(BOARD_LILYGO)
+        sleep_tick(now);
+#endif
+
+        update_led();
+
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
+
 // ── setup ─────────────────────────────────────────────────────────────────────
 void setup() {
 #if defined(BOARD_LILYGO)
@@ -330,6 +432,26 @@ void setup() {
     Serial.println(" Tesla FSD Unlock — ESP32   ");
     Serial.println("============================");
     Serial.printf("[FSD] Build: %s %s\n", __DATE__, __TIME__);
+
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (running) {
+        Serial.printf("[OTA] Running from: %s\n", running->label);
+
+        esp_ota_img_states_t ota_state;
+        if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
+            if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+                Serial.println("[OTA] First boot after update - marking as valid...");
+                if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+                    Serial.println("[OTA] Firmware marked valid");
+                } else {
+                    Serial.println("[OTA] WARNING: Could not mark firmware valid");
+                }
+            } else if (ota_state == ESP_OTA_IMG_VALID) {
+                Serial.println("[OTA] Running verified firmware");
+            }
+        }
+    }
+
 #if defined(CAN_DRIVER_TWAI)
   #if defined(BOARD_WAVESHARE_S3)
     Serial.println("[CAN] Driver: ESP32-S3 TWAI (Waveshare ESP32-S3-RS485-CAN)");
@@ -366,6 +488,12 @@ void setup() {
     g_state.suppress_speed_chime  = true;
     g_state.emergency_vehicle_detect = false;
     g_state.force_fsd             = false;
+    g_state.china_mode            = false;
+    g_state.profile_mode_auto     = true;
+    g_state.manual_speed_profile  = 1;
+    g_state.hw4_offset            = 0;
+    g_state.hw4_offset_percent_mode = false;
+    g_state.hw4_offset_active     = 0;
     g_state.bms_output            = false;
 
     prefs_load(&g_state);
@@ -424,96 +552,29 @@ void setup() {
     if (wifi_ap_init(&g_state)) {
         web_dashboard_init(&g_state, g_can);
     }
+
+    // ── Create CAN task pinned to Core 1 ──────────────────────────────────────
+    BaseType_t can_task_ok = xTaskCreatePinnedToCore(
+        can_task,
+        "CANTask",
+        8192,
+        nullptr,
+        3,
+        &g_can_task_handle,
+        1);
+    if (can_task_ok == pdPASS) {
+        Serial.println("[CAN] Task created on Core 1");
+    } else {
+        Serial.println("[ERR] CAN task creation FAILED");
+        led_set(LED_RED);
+        while (true) {
+            led_set(LED_RED); delay(200);
+            led_set(LED_OFF); delay(200);
+        }
+    }
 }
 
 // ── loop ──────────────────────────────────────────────────────────────────────
 void loop() {
-    uint32_t now = millis();
-
-    if (g_factory_reset_window && now >= FACTORY_RESET_WINDOW_MS) {
-        g_factory_reset_window = false;
-        Serial.println("[BTN] Factory reset window closed");
-    }
-
-    button_tick();
-
-    // Drain all available CAN frames in one shot
-    CanFrame frame;
-    while (g_can->receive(frame)) {
-        process_frame(frame);
-    }
-
-    // ── Periodic error counter refresh (~every 250 ms) ────────────────────────
-    static uint32_t last_err_ms = 0;
-    if ((now - last_err_ms) >= 250u) {
-        g_state.crc_err_count = g_can->errorCount();
-        last_err_ms = now;
-    }
-
-    // ── Precondition frame injection ──────────────────────────────────────────
-    static uint32_t last_precond_ms = 0;
-    if (g_state.precondition && fsd_can_transmit(&g_state) &&
-        (now - last_precond_ms) >= PRECOND_INTERVAL_MS) {
-        CanFrame pf;
-        fsd_build_precondition_frame(&pf);
-        g_can->send(pf);
-        last_precond_ms = now;
-    }
-
-    // ── BMS serial output ─────────────────────────────────────────────────────
-    static uint32_t last_bms_ms = 0;
-    if (g_state.bms_output && g_state.bms_seen &&
-        (now - last_bms_ms) >= BMS_PRINT_MS) {
-        float kw = g_state.pack_voltage_v * g_state.pack_current_a / 1000.0f;
-        Serial.printf("[BMS] %.1fV  %.1fA  %.2fkW  SoC:%.1f%%  Temp:%d~%d°C\n",
-            g_state.pack_voltage_v,
-            g_state.pack_current_a,
-            kw,
-            g_state.soc_percent,
-            (int)g_state.batt_temp_min_c,
-            (int)g_state.batt_temp_max_c);
-        last_bms_ms = now;
-    }
-
-    // ── Active-mode status line ───────────────────────────────────────────────
-    static uint32_t last_status_ms = 0;
-    if (g_state.op_mode == OpMode_Active &&
-        (now - last_status_ms) >= STATUS_PRINT_MS) {
-        const char *hw_str =
-            (g_state.hw_version == TeslaHW_HW4)    ? "HW4"    :
-            (g_state.hw_version == TeslaHW_HW3)    ? "HW3"    :
-            (g_state.hw_version == TeslaHW_Legacy)  ? "Legacy" : "?";
-        Serial.printf(
-            "[STA] HW:%-6s FSD:%-4s NAG:%-10s OTA:%-3s "
-            "Profile:%d  RX:%lu TX:%lu Err:%lu\n",
-            hw_str,
-            g_state.fsd_enabled     ? "ON"         : "wait",
-            g_state.nag_suppressed  ? "suppressed"  : "active",
-            g_state.tesla_ota_in_progress ? "YES"  : "no",
-            g_state.speed_profile,
-            (unsigned long)g_state.rx_count,
-            (unsigned long)g_state.frames_modified,
-            (unsigned long)g_state.crc_err_count);
-        last_status_ms = now;
-    }
-
-    // ── Wiring sanity warning ─────────────────────────────────────────────────
-    static uint32_t last_warn_ms = 0;
-    if (g_state.rx_count == 0 && now > WIRING_WARN_MS &&
-        (now - last_warn_ms) >= 2000u) {
-        Serial.println("[WARN] No CAN traffic after 5 s — check wiring");
-        Serial.println("[WARN] Verify CAN-H on OBD pin 6, CAN-L on pin 14");
-        last_warn_ms = now;
-    }
-
-    can_dump_tick(now);
-
-#if defined(BOARD_LILYGO)
-    sleep_tick(now);
-#endif
-
-    // ── Web dashboard (after CAN to preserve CAN frame latency) ──────────────
-    web_dashboard_update();
-
-    update_led();
+    vTaskDelay(pdMS_TO_TICKS(100));
 }
