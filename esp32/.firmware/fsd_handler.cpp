@@ -53,9 +53,20 @@ void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
     state->force_fsd            = false;
     state->bms_output           = false;
     state->sleep_idle_ms        = SLEEP_IDLE_MS;
+    state->hw_override          = TeslaHW_Unknown;  // 0 = auto-detect
+    state->ota_ignore           = false;
 
-    strncpy(state->wifi_ssid, "Tesla-FSD", sizeof(state->wifi_ssid));
-    strncpy(state->wifi_pass, "12345678",  sizeof(state->wifi_pass));
+    // Build-time overridable via WIFI_DEFAULT_SSID / WIFI_DEFAULT_PASS in
+    // platformio.ini (or a gitignored platformio_local.ini) so personal
+    // credentials don't ship in the public repo.
+    #ifndef WIFI_DEFAULT_SSID
+    #define WIFI_DEFAULT_SSID "Tesla-FSD"
+    #endif
+    #ifndef WIFI_DEFAULT_PASS
+    #define WIFI_DEFAULT_PASS "12345678"
+    #endif
+    strncpy(state->wifi_ssid, WIFI_DEFAULT_SSID, sizeof(state->wifi_ssid));
+    strncpy(state->wifi_pass, WIFI_DEFAULT_PASS, sizeof(state->wifi_pass));
     state->wifi_hidden = false;
 }
 
@@ -74,7 +85,7 @@ void fsd_apply_hw_version(FSDState *state, TeslaHWVersion hw) {
 
 bool fsd_can_transmit(const FSDState *state) {
     if (state->op_mode == OpMode_ListenOnly) return false;
-    if (state->tesla_ota_in_progress)        return false;
+    if (state->tesla_ota_in_progress && !state->ota_ignore) return false;
     return true;
 }
 
@@ -423,11 +434,171 @@ bool fsd_handle_tlssc_restore(FSDState *state, CanFrame *frame) {
     return true;
 }
 
-// ── DAS status (0x39B) — nag killer gating ───────────────────────────────────
+// ── DAS status (0x39B) — nag killer gating + diagnostics readback ───────────
 
 void fsd_handle_das_status(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc == 0) return;
+    // Mark seen so the dashboard knows the ID is on this bus, even if a
+    // particular field's bytes aren't present.
+    state->das_seen = true;
+    state->raw_39b_dlc = frame->dlc;
+    for (uint8_t i = 0; i < frame->dlc && i < 8; i++)
+        state->raw_39b_bytes[i] = frame->data[i];
     if (frame->dlc < 6) return;
     // DAS_autopilotHandsOnState: bit42|4 LE → byte5 bits[5:2]
     state->das_hands_on_state = (frame->data[5] >> 2) & 0x0Fu;
-    state->das_seen = true;
+    // DAS_autoLaneChangeState: bit46|5 LE → byte5 bits[7:6] + byte6 bits[2:0]
+    if (frame->dlc >= 7) {
+        state->das_lane_change = ((frame->data[5] >> 6) & 0x03u) |
+                                 ((frame->data[6] & 0x07u) << 2);
+    }
+    // DAS_sideCollisionWarning: bit32|2 → byte4 bits[1:0]
+    // DAS_sideCollisionAvoid:   bit30|2 → byte3 bits[7:6]
+    if (frame->dlc >= 5) {
+        state->das_side_coll_warn  = frame->data[4] & 0x03u;
+        state->das_side_coll_avoid = (frame->data[3] >> 6) & 0x03u;
+    }
+    // DAS_forwardCollisionWarning: bit22|2 → byte2 bits[7:6]
+    // DAS_visionOnlySpeedLimit:    bit16|5 → byte2 bits[4:0], ×5 = kph
+    if (frame->dlc >= 3) {
+        state->das_fcw              = (frame->data[2] >> 6) & 0x03u;
+        state->das_vision_speed_lim = frame->data[2] & 0x1Fu;
+    }
+}
+
+// ── DAS_autopilot config readback (0x331) ────────────────────────────────────
+// byte[0] lower 6 bits encodes two 3-bit tiers (DAS_autopilot / Base).
+// Tier enum: 0=NONE 1=HIGHWAY 2=ENHANCED 3=SELF_DRIVING 4=BASIC.
+void fsd_handle_das_ap_config(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc < 1) return;
+    uint8_t b0 = frame->data[0];
+    state->das_autopilot      = (b0 >> 3) & 0x07u;
+    state->das_autopilot_base = b0 & 0x07u;
+    state->das_ap_seen        = true;
+}
+
+// ── DI_speed (0x257) — vehicle speed ─────────────────────────────────────────
+// DI_vehicleSpeed: 12-bit LE starting at bit 12 → byte1 high nibble + byte2
+// scale 0.08, offset -40, units kph.
+// DI_uiSpeed: bit24|8 → byte 3 (display speed, integer kph or mph).
+void fsd_handle_di_speed(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc < 4) return;
+    uint16_t raw = (((uint16_t)frame->data[2]) << 4) | ((frame->data[1] >> 4) & 0x0Fu);
+    float v = (float)raw * 0.08f - 40.0f;
+    if (v < 0.0f) v = 0.0f;
+    state->vehicle_speed_kph = v;
+    state->ui_speed = frame->data[3];
+    state->speed_seen = true;
+}
+
+// ── ESP_v118 (0x145) — driver brake pedal ────────────────────────────────────
+// opendbc tesla_model3_party.dbc:
+//   ESP_brakePedalPressed: 19|1@1+ → byte 2, bit 3 (LE)
+// (The Flipper code reads byte 3 bits [6:5]; that's a different bit on this
+//  firmware version and reads as constantly non-zero, so we use the opendbc
+//  position here.)
+void fsd_handle_esp_status(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc == 0) return;
+    state->raw_145_dlc = frame->dlc;
+    for (uint8_t i = 0; i < frame->dlc && i < 8; i++)
+        state->raw_145_bytes[i] = frame->data[i];
+    if (frame->dlc < 3) return;
+    // Note: this position (byte 2 bit 3 per opendbc) is observed to NOT toggle
+    // on EU HW3 firmware via Chassis CAN — the Chassis-CAN brake bit lives in
+    // 0x102 instead (see fsd_handle_vcleft_brake). We only set brake_applied
+    // here when the brake_seen flag isn't already being driven by 0x102.
+    if (!state->brake_seen) {
+        state->driver_brake_applied = ((frame->data[2] >> 3) & 0x01u) != 0;
+        state->brake_seen = true;
+    }
+}
+
+// (NOTE: 0x102 byte 4 bit 1 was tested as a brake candidate from a 3-tap
+//  capture but turned out to flicker independently of brake input — false
+//  correlation. Brake on Chassis CAN appears to live somewhere we haven't
+//  identified yet; needs more reverse engineering. The 0x145 ESP_status
+//  parser above remains the Party-CAN brake source per opendbc.)
+
+// ── DI_torque1 (0x108) — drive motor torque ──────────────────────────────────
+// opendbc tesla_model3_party.dbc:
+//   DI_torqueMotor: 21|13@1+ (0.222656, -750) — actual motor output, Nm
+// LE 13-bit unsigned starting at bit 21:
+//   byte[2] bits [7:5] = bits 21..23 (low 3 bits)
+//   byte[3] bits [7:0] = bits 24..31 (mid 8 bits)
+//   byte[4] bits [1:0] = bits 32..33 (high 2 bits)
+// (The Flipper code read DI_torqueDriver at bit 0 with scale 0.25 — on this
+//  firmware that value moves around unrelated to actual motor torque.)
+void fsd_handle_di_torque(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc < 5) return;
+    uint16_t raw = (uint16_t)((frame->data[2] >> 5) & 0x07u)
+                 | ((uint16_t)frame->data[3] << 3)
+                 | ((uint16_t)(frame->data[4] & 0x03u) << 11);
+    state->motor_torque_nm = (float)raw * 0.222656f - 750.0f;
+    state->torque_seen = true;
+}
+
+// ── SCCM_steeringAngleSensor (0x129) — steering wheel angle ──────────────────
+// opendbc tesla_model3_party.dbc:
+//   SCCM_steeringAngleSensor: 16|14@1+ (0.1, -819.2)
+// LE 14-bit unsigned starting at bit 16 = byte 2, with offset:
+//   byte[2] = bits 16..23 (low 8 bits)
+//   byte[3] bits [5:0] = bits 24..29 (high 6 bits)
+// (The Flipper code read raw int16 from bytes 0-1, which on this firmware is
+//  a different field that jumps unrelated to wheel position.)
+void fsd_handle_steering_angle(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc == 0) return;
+    state->steering_seen = true;
+    state->raw_129_dlc = frame->dlc;
+    for (uint8_t i = 0; i < frame->dlc && i < 8; i++)
+        state->raw_129_bytes[i] = frame->data[i];
+    if (frame->dlc < 4) return;
+    uint16_t raw = (uint16_t)frame->data[2] | ((uint16_t)(frame->data[3] & 0x3Fu) << 8);
+    state->steering_angle_deg = (float)raw * 0.1f - 819.2f;
+}
+
+// ── 0x420 — Chassis-CAN battery status fallback ─────────────────────────────
+// Reverse-engineered against a 2026.8.3 EU HW3 car (Chassis CAN tap):
+//   byte 0 = battery temp °C × 2 (tentative — verified at 0x28 = 40 raw,
+//            so 20°C, vs cluster reading of ~21.5°C — within sensor delta).
+//   byte 2 = SoC % (verified at 64% with byte 2 = 0x40).
+//   byte 3 = stable value, meaning unknown (verified != charge target).
+// Standard BMS frames (0x132/0x292/0x312) aren't broadcast on Chassis CAN
+// here. Pack voltage/current still unavailable without UDS query/response.
+void fsd_handle_batt_status_chassis(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc < 3) return;
+    state->soc_percent      = (float)frame->data[2];
+    state->bms_seen         = true;
+}
+
+// ── 0x239 — Chassis-CAN battery temperature ──────────────────────────────────
+// Low-rate broadcast. byte 5 × 0.5 − 40 = battery temperature °C using the
+// standard Tesla cell-temp encoding. Verified on live data against a
+// 22°C-cluster reading. byte 2 also decodes in the temp range but the
+// values don't track with the actual battery temp — likely some other
+// field that just happens to fall in the same numeric range.
+void fsd_handle_batt_temp(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc < 6) return;
+    int t = (int)frame->data[5] / 2 - 40;
+    state->batt_temp_min_c = (int8_t)t;
+    state->batt_temp_max_c = (int8_t)t;
+    state->bms_seen        = true;
+}
+
+// ── 0x2B5 — Chassis-CAN DC bus status ────────────────────────────────────────
+// Reverse-engineered against a 2026.8.3 EU HW3 car (Chassis CAN tap),
+// values cross-verified against enhauto Commander:
+//   bytes 0-1 LE  × 0.01 = LV (12V) bus voltage  (e.g. 1580 = 15.80 V)
+//   bytes 2-3 LE  × 0.1  = HV pack voltage       (e.g. 3785 = 378.5 V)
+//   byte 4        × 0.1  = LV bus current (A)    (e.g. 0xC8 = 20.0 A)
+// Populates pack_voltage_v (HV) and the new lv_bus_* fields. HV pack
+// current isn't in this message; left as 0.
+void fsd_handle_dc_bus(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc < 5) return;
+    uint16_t lv_raw = (uint16_t)frame->data[0] | ((uint16_t)frame->data[1] << 8);
+    uint16_t hv_raw = (uint16_t)frame->data[2] | ((uint16_t)frame->data[3] << 8);
+    state->lv_bus_voltage_v = (float)lv_raw * 0.01f;
+    state->lv_bus_current_a = (float)frame->data[4] * 0.1f;
+    state->pack_voltage_v   = (float)hv_raw * 0.1f;
+    state->lv_bus_seen      = true;
+    state->bms_seen         = true;
 }

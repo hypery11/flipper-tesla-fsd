@@ -107,6 +107,7 @@ Any ESP32 board + CAN transceiver works. Pick the matching build env in `platfor
 |---|---|---|---|---|
 | `m5stack-atom` | M5Stack ATOM Lite + ATOMIC CAN Base | TWAI | 22 / 19 | Default, cheapest |
 | `m5stack-atom-swap-pins` | M5Stack ATOM Lite + ATOMIC CAN Base | TWAI | 19 / 22 | For boards with swapped silkscreen |
+| `m5stack-atom-matrix` | M5Stack ATOM Matrix + ATOMIC CAN Base | TWAI | 22 / 19 | Drives all 25 pixels (5×5) for status |
 | `esp32-mcp2515` | Generic ESP32 + MCP2515 module | MCP2515 SPI | SPI CS=5 | 8 MHz crystal |
 | `esp32-lilygo` | LilyGO T-CAN485 | TWAI | 27 / 26 | Built-in SN65HVD230 + SD slot |
 | `waveshare-s3-can` | Waveshare ESP32-S3-RS485-CAN | TWAI | 15 / 16 | ESP32-S3, 8MB flash/PSRAM, USB-CDC |
