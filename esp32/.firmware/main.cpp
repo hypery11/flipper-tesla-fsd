@@ -19,12 +19,14 @@
 #include <esp_sleep.h>
 #include <esp_ota_ops.h>
 #include "config.h"
+#include "can_signals.h"
 #include "fsd_handler.h"
 #include "can_driver.h"
 #include "led.h"
 #include "wifi_manager.h"
 #include "web_dashboard.h"
 #include "can_dump.h"
+#include "http_can_stream.h"
 #include "prefs.h"
 
 // ── Globals ───────────────────────────────────────────────────────────────────
@@ -48,6 +50,25 @@ static FSDState state_snapshot() {
     return s;
 }
 
+static bool hw_uses_hw3_das_status(TeslaHWVersion hw) {
+    return hw == TeslaHW_Legacy || hw == TeslaHW_HW3;
+}
+
+static bool hw_uses_hw4_das_status(TeslaHWVersion hw) {
+    return hw == TeslaHW_HW4;
+}
+
+static bool frame_looks_like_hw3_das_status(const CanFrame &frame) {
+    if (frame.id != CAN_ID_DAS_STATUS_HW3 || frame.dlc != CAN_FRAME_MAX_DATA_LEN) return false;
+
+    uint8_t ap_state = frame.data[SIG_DAS_HW3_AP_STATE_BYTE] & SIG_DAS_HW3_AP_STATE_MASK;
+    uint8_t hands_on =
+        (frame.data[SIG_DAS_HANDS_ON_STATE_BYTE] >> SIG_DAS_HANDS_ON_STATE_SHIFT) &
+        SIG_DAS_HANDS_ON_STATE_MASK;
+
+    return ap_state <= 3u && hands_on <= 8u;
+}
+
 static void apply_detected_hw(TeslaHWVersion hw, const char *reason) {
     if (hw == TeslaHW_Unknown) return;
     state_enter();
@@ -63,6 +84,14 @@ static void apply_detected_hw(TeslaHWVersion hw, const char *reason) {
         (hw == TeslaHW_HW3) ? "HW3" : "Legacy";
     Serial.printf("[HW] Auto-detected: %s (%s)\n", hw_str, reason);
     can_dump_log("HW  auto-detected: %s (%s)", hw_str, reason);
+}
+
+static bool send_modified_frame(const CanFrame &frame) {
+    if (!g_can || !g_can->send(frame)) return false;
+    state_enter();
+    g_state.frames_modified++;
+    state_exit();
+    return true;
 }
 
 // ── Button state machine ──────────────────────────────────────────────────────
@@ -96,6 +125,7 @@ static void dispatch_clicks(int n) {
         saved = g_state;
         state_exit();
         g_can->setListenOnly(!active);
+        http_can_stream_set_enabled(!active);
         Serial.println(active ? "[BTN] → Active mode" : "[BTN] → Listen-Only mode");
         can_dump_log(active ? "MODE switched to Active — TX enabled" : "MODE switched to Listen-Only — TX disabled");
         prefs_save(&saved);
@@ -208,6 +238,9 @@ static void process_frame(const CanFrame &frame) {
     state_exit();
 
     can_dump_record(frame);
+    if (state_snapshot().op_mode == OpMode_ListenOnly) {
+        http_can_stream_record(frame);
+    }
 #if defined(BOARD_LILYGO)
     g_last_can_rx_ms = millis();
     g_sleep_warned   = false;
@@ -231,14 +264,20 @@ static void process_frame(const CanFrame &frame) {
         bool was_ota = g_state.tesla_ota_in_progress;
         fsd_handle_gtw_car_state(&g_state, &frame);
         bool is_ota = g_state.tesla_ota_in_progress;
+        bool ignore_ota = g_state.ignore_ota;
         uint8_t raw = g_state.ota_raw_state;
         state_exit();
         if (!was_ota && is_ota) {
-            Serial.printf("[OTA] Update in progress (raw=%u) - TX suspended\n", raw);
-            can_dump_log("OTA  started — TX suspended");
+            if (ignore_ota) {
+                Serial.printf("[OTA] Update in progress (raw=%u) - TX allowed by Ignore OTA\n", raw);
+                can_dump_log("OTA  started - TX allowed by Ignore OTA");
+            } else {
+                Serial.printf("[OTA] Update in progress (raw=%u) - TX suspended\n", raw);
+                can_dump_log("OTA  started - TX suspended");
+            }
         } else if (was_ota && !is_ota) {
             Serial.printf("[OTA] Update finished (raw=%u) - TX resumed\n", raw);
-            can_dump_log("OTA  finished — TX resumed");
+            can_dump_log("OTA  finished - TX resumed");
         }
         return;
     }
@@ -249,7 +288,19 @@ static void process_frame(const CanFrame &frame) {
     if (frame.id == CAN_ID_BMS_THERMAL) { state_enter(); fsd_handle_bms_thermal(&g_state, &frame); state_exit(); return; }
 
     // ── DAS status (read-only, always) — gating for NAG killer ───────────────
-    if (frame.id == CAN_ID_DAS_STATUS)  { state_enter(); fsd_handle_das_status(&g_state, &frame);  state_exit(); return; }
+    FSDState das_state = state_snapshot();
+    if (hw_uses_hw3_das_status(das_state.hw_version) && frame.id == CAN_ID_DAS_STATUS_HW3) {
+        state_enter();
+        fsd_handle_das_status_hw3(&g_state, &frame);
+        state_exit();
+        return;
+    }
+    if (hw_uses_hw4_das_status(das_state.hw_version) && frame.id == CAN_ID_DAS_STATUS_HW4) {
+        state_enter();
+        fsd_handle_das_status_hw4(&g_state, &frame);
+        state_exit();
+        return;
+    }
 
     // ── Beyond here only run when TX is allowed ───────────────────────────────
     state_enter();
@@ -262,14 +313,7 @@ static void process_frame(const CanFrame &frame) {
         state_enter();
         bool fired = fsd_handle_nag_killer(&g_state, &frame, &echo);
         state_exit();
-        if (fired) {
-            uint8_t lvl     = (frame.data[4] >> 6) & 0x03;
-            uint8_t cnt_in  = frame.data[6] & 0x0F;
-            uint8_t cnt_out = echo.data[6] & 0x0F;
-            can_dump_log("NAG 0x370 hands_off lvl=%u cnt=%u->%u %s",
-                         lvl, cnt_in, cnt_out, tx ? "TX echo" : "listen-only no-TX");
-            if (tx) g_can->send(echo);
-        }
+        if (fired && tx) send_modified_frame(echo);
         return;
     }
 
@@ -287,7 +331,7 @@ static void process_frame(const CanFrame &frame) {
         state_enter();
         bool modified = fsd_handle_legacy_autopilot(&g_state, &f);
         state_exit();
-        if (modified && tx) g_can->send(f);
+        if (modified && tx) send_modified_frame(f);
         return;
     }
 
@@ -298,18 +342,25 @@ static void process_frame(const CanFrame &frame) {
     }
 
     // Fallback HW detection when 0x398 is unavailable on the tapped bus.
-    // Delay 0x3FD→HW3 fallback to avoid misclassifying HW4 (which also has
-    // 0x3FD) before 0x399 arrives. 0x3EE and 0x399 are unambiguous.
+    // Prefer explicit HW4 DAS_status (0x39B) when present. If the tap only sees
+    // HW3-style DAS_status on 0x399, classify as HW3 after repeated plausible
+    // samples so 0x399 can be parsed for AP/NAG gating.
     static uint32_t hw_fallback_3fd_count = 0;
+    static uint32_t hw_fallback_399_count = 0;
     if (state_snapshot().hw_version == TeslaHW_Unknown) {
         if (frame.id == CAN_ID_AP_LEGACY) {
             apply_detected_hw(TeslaHW_Legacy, "fallback:0x3EE");
-        } else if (frame.id == CAN_ID_ISA_SPEED) {
-            apply_detected_hw(TeslaHW_HW4, "fallback:0x399");
+        } else if (frame.id == CAN_ID_DAS_STATUS_HW4 && frame.dlc == CAN_FRAME_MAX_DATA_LEN) {
+            apply_detected_hw(TeslaHW_HW4, "fallback:0x39B");
             hw_fallback_3fd_count = 0;
+            hw_fallback_399_count = 0;
+        } else if (frame_looks_like_hw3_das_status(frame)) {
+            hw_fallback_399_count++;
+            if (hw_fallback_399_count >= 2u)
+                apply_detected_hw(TeslaHW_HW3, "fallback:0x399(DAS status)");
         } else if (frame.id == CAN_ID_AP_CONTROL) {
             hw_fallback_3fd_count++;
-            if (hw_fallback_3fd_count >= 50)
+            if (hw_fallback_3fd_count >= 10u)
                 apply_detected_hw(TeslaHW_HW3, "fallback:0x3FD(confirmed)");
         }
     }
@@ -321,7 +372,7 @@ static void process_frame(const CanFrame &frame) {
         s.suppress_speed_chime) {
         CanFrame f = frame;
         if (fsd_handle_isa_speed_chime(&f) && tx)
-            g_can->send(f);
+            send_modified_frame(f);
         return;
     }
 
@@ -339,7 +390,7 @@ static void process_frame(const CanFrame &frame) {
         state_enter();
         bool modified = fsd_handle_tlssc_restore(&g_state, &f);
         state_exit();
-        if (modified && tx) g_can->send(f);
+        if (modified && tx) send_modified_frame(f);
         return;
     }
 
@@ -349,7 +400,7 @@ static void process_frame(const CanFrame &frame) {
         state_enter();
         bool modified = fsd_handle_autopilot_frame(&g_state, &f);
         state_exit();
-        if (modified && tx) g_can->send(f);
+        if (modified && tx) send_modified_frame(f);
         return;
     }
 }
@@ -444,7 +495,9 @@ void setup() {
     // Explicit safe defaults — will be overridden after HW auto-detect
     g_state.op_mode               = OpMode_ListenOnly;
     g_state.nag_killer            = true;
+    g_state.fsd_unlock            = true;
     g_state.suppress_speed_chime  = true;
+    g_state.ignore_ota            = false;
     g_state.emergency_vehicle_detect = false;
     g_state.force_fsd             = false;
     g_state.china_mode            = false;
@@ -505,6 +558,7 @@ void setup() {
     // ── WiFi AP + Web dashboard (non-fatal if WiFi fails) ─────────────────────
     if (wifi_ap_init(&g_state)) {
         web_dashboard_init(&g_state, g_can, &g_state_mux);
+        http_can_stream_set_enabled(state_snapshot().op_mode == OpMode_ListenOnly);
     }
 }
 
@@ -571,9 +625,10 @@ void loop() {
             (s.hw_version == TeslaHW_HW3)    ? "HW3"    :
             (s.hw_version == TeslaHW_Legacy)  ? "Legacy" : "?";
         Serial.printf(
-            "[STA] HW:%-6s FSD:%-4s NAG:%-10s OTA:%-3s "
+            "[STA] HW:%-6s AP:%-4s FSD_UI:%-4s NAG:%-10s OTA:%-3s "
             "Profile:%d  RX:%lu TX:%lu Err:%lu\n",
             hw_str,
+            s.ap_active       ? "ON"         : "wait",
             s.fsd_enabled     ? "ON"         : "wait",
             s.nag_suppressed  ? "suppressed"  : "active",
             s.tesla_ota_in_progress ? "YES"  : "no",

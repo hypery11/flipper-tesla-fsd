@@ -32,13 +32,16 @@ struct FSDState {
     int            speed_offset;    // HW3 only, 0-100
 
     bool           fsd_enabled;     // true when car's UI has FSD selected (mux0)
+    bool           ap_active;       // true when DAS reports AP/TACC active
     bool           nag_suppressed;  // true after first nag-killer echo sent
 
     uint32_t       frames_modified; // TX counter
 
     // ── Feature flags (runtime-toggleable) ───────────────────────────────────
+    bool           fsd_unlock;              // modify autopilot FSD unlock frames
     bool           force_fsd;               // bypass UI selection check
-    bool           suppress_speed_chime;    // ISA chime suppress (HW4, 0x399)
+    bool           suppress_speed_chime;    // HW4 ISA_SPEED chime suppress
+    bool           ignore_ota;              // allow TX while Tesla OTA is detected
     bool           china_mode;              // bypass FSD UI selection check for China vehicles
     bool           emergency_vehicle_detect;// set bit59 in mux0 (HW4)
     bool           nag_killer;              // 0x370 counter+1 echo
@@ -50,7 +53,7 @@ struct FSDState {
     uint8_t        ota_raw_state;           // raw GTW_updateInProgress bits [1:0]
     uint8_t        ota_assert_count;        // consecutive "in-progress" samples
     uint8_t        ota_clear_count;         // consecutive "not in-progress" samples
-    uint32_t       crc_err_count;           // CAN bus error counter
+    uint32_t       crc_err_count;           // legacy name; aggregate CAN driver errors
     uint32_t       rx_count;                // total frames seen (wiring check)
     uint32_t       seen_gtw_car_state;      // 0x318 seen count
     uint32_t       seen_gtw_car_config;     // 0x398 seen count
@@ -83,12 +86,18 @@ struct FSDState {
     bool           tlssc_restore;
     uint32_t       tlssc_restore_count;
 
-    // ── DAS status (0x39B) — nag killer gating ───────────────────────────────
+    // ── DAS status — nag killer gating ───────────────────────────────────────
+    // Legacy/HW3 source: 0x399. HW4 source: 0x39B.
     // 0=NOT_REQD, 8=SUSPENDED — both mean DAS is satisfied, skip echo.
-    // das_seen starts false; if 0x39B is absent from the tapped bus the nag
-    // killer falls back to EPAS-level-only gating (conservative echo).
+    // das_seen starts false; nag killer waits for AP-active DAS status before echoing.
     bool           das_seen;
+    uint8_t        das_ap_state;
+    uint8_t        das_speed_limit_1;
+    uint8_t        das_speed_limit_2;
     uint8_t        das_hands_on_state;
+    uint8_t        das_lane_change_state;
+    uint8_t        das_counter;
+    uint8_t        das_checksum;
 };
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -123,7 +132,7 @@ void fsd_handle_legacy_stalk(FSDState *state, const CanFrame *frame);
  *  Returns true if frame was modified and should be re-sent. */
 bool fsd_handle_legacy_autopilot(FSDState *state, CanFrame *frame);
 
-/** Modify ISA speed limit frame (0x399) to suppress speed chime (HW4).
+/** Modify ISA speed limit frame (0x399, HW4 only) to suppress speed chime.
  *  Returns true if frame was modified and should be re-sent. */
 bool fsd_handle_isa_speed_chime(CanFrame *frame);
 
@@ -148,5 +157,8 @@ void fsd_build_precondition_frame(CanFrame *frame);
  *  Returns true if frame was modified and should be re-sent. */
 bool fsd_handle_tlssc_restore(FSDState *state, CanFrame *frame);
 
-/** Parse DAS_status (0x39B) — updates das_hands_on_state for nag killer gating. */
-void fsd_handle_das_status(FSDState *state, const CanFrame *frame);
+/** Parse DAS_status from Legacy/HW3 0x399 — updates AP/speed/hands-on state. */
+void fsd_handle_das_status_hw3(FSDState *state, const CanFrame *frame);
+
+/** Parse DAS_status from HW4 0x39B — updates AP/speed/hands-on state. */
+void fsd_handle_das_status_hw4(FSDState *state, const CanFrame *frame);

@@ -204,7 +204,7 @@ And these "Vehicle CAN" signals are also writable on bus 6:
 
 **One bus, one connection, reads and writes almost everything.**
 
-This is how the 非凡指揮官 (Feifan Commander, 69K+ sales in China)
+This is how the Feifan Commander (69K+ sales in China)
 achieves its full feature set with just 4 wires:
 
 ```

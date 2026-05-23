@@ -2,3 +2,5 @@ dist/
 .vscode/
 .ufbt/
 .DS_Store
+.idea
+.tmp
