@@ -397,14 +397,38 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <span class="lbl">TLSSC Restore</span>
     <label class="sw"><input type="checkbox" id="swTlssc" onchange="cmd('tlssc_restore',this.checked)"><span class="sl2"></span></label>
   </div>
+)rawliteral"
+#if defined(BOARD_TTGO_DISPLAY)
+R"rawliteral(
+  <div class="row">
+    <span class="lbl">TTGO Display</span>
+    <label class="sw"><input type="checkbox" id="swDisp" onchange="cmd('disp',this.checked)"><span class="sl2"></span></label>
+  </div>
+  <div class="row">
+    <span class="lbl">Display Brightness (%)</span>
+    <input type="number" id="dispBr" min="0" max="100" style="width:60px;background:var(--card2);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px;text-align:right" onchange="cmd('disp_br',parseInt(this.value))">
+  </div>
+  <div class="row">
+    <span class="lbl">Display Timeout (s)</span>
+    <input type="number" id="dispTo" min="0" max="3600" style="width:60px;background:var(--card2);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px;text-align:right" onchange="cmd('disp_to',parseInt(this.value))">
+  </div>
+)rawliteral"
+#endif
+R"rawliteral(
   <div class="row">
     <span class="lbl">CAN Dump</span>
     <label class="sw"><input type="checkbox" id="swDump" onchange="cmd('dump',this.checked)"><span class="sl2"></span></label>
   </div>
+)rawliteral"
+#if defined(BOARD_LILYGO)
+R"rawliteral(
   <div class="row">
     <span class="lbl">Deep Sleep (sec)</span>
     <input type="number" id="numSleep" min="10" max="3600" style="width:60px;background:var(--card2);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px;text-align:right" onchange="cmd('sleep',parseInt(this.value)*1000)">
   </div>
+)rawliteral"
+#endif
+R"rawliteral(
 </div>
 
 <!-- WiFi Config -->
@@ -481,7 +505,14 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
   <button class="btn-main btn-yellow" onclick="restartDevice(this)" style="margin-top:12px">RESTART DEVICE</button>
 </div>
 
-<div class="foot">Tesla FSD ESP32 &middot; M5Stack ATOM Lite + ATOMIC CAN Base</div>
+<div class="foot">Tesla FSD ESP32 &middot;
+)rawliteral"
+#if defined(BOARD_TTGO_DISPLAY)
+R"rawliteral( TTGO T-Display + MCP2515)rawliteral"
+#else
+R"rawliteral( M5Stack ATOM Lite + ATOMIC CAN Base)rawliteral"
+#endif
+R"rawliteral(</div>
 </div><!-- /wrap -->
 
 <script>
@@ -560,11 +591,16 @@ function upd(d){
   if(document.getElementById('swChime')) document.getElementById('swChime').checked=d.suppress_speed_chime;
   if(document.getElementById('rowChime')) document.getElementById('rowChime').style.display=d.isa_speed_enabled?'flex':'none';
   if(document.getElementById('swTlssc')) document.getElementById('swTlssc').checked=d.tlssc_restore;
+  if(document.getElementById('swDisp')) document.getElementById('swDisp').checked=!!d.display_enabled;
+  if(document.activeElement.id!=='dispBr' && document.getElementById('dispBr'))
+    document.getElementById('dispBr').value=d.display_brightness||50;
+  if(document.activeElement.id!=='dispTo' && document.getElementById('dispTo'))
+    document.getElementById('dispTo').value=d.display_timeout_s||60;
   if(document.getElementById('swDump')) document.getElementById('swDump').checked=!!d.can_dump;
-  
-  if(document.activeElement.id!=='numSleep' && document.getElementById('numSleep')) 
+
+  if(document.activeElement.id!=='numSleep' && document.getElementById('numSleep'))
     document.getElementById('numSleep').value=Math.floor((d.sleep_ms||0)/1000);
-  
+
   pill('dumpSt',d.can_dump,d.can_dump?'Recording':'Idle');
 
   // CAN stats
@@ -1065,12 +1101,18 @@ static String build_json() {
     j += "\"china_mode\":";    j += state.china_mode                   ? "true" : "false"; j += ',';
     j += "\"suppress_speed_chime\":"; j += state.suppress_speed_chime  ? "true" : "false"; j += ',';
     j += "\"tlssc_restore\":"; j += state.tlssc_restore                ? "true" : "false"; j += ',';
+#if defined(BOARD_TTGO_DISPLAY)
+    j += "\"display_enabled\":"; j += state.display_enabled             ? "true" : "false"; j += ',';
+    j += "\"display_brightness\":"; j += state.display_brightness;      j += ',';
+    j += "\"display_timeout_s\":";  j += state.display_timeout_s;       j += ',';
+#endif
     j += "\"can_vehicle_detected\":"; j += can_vehicle_detected       ? "true" : "false"; j += ',';
     j += "\"bms_hv_seen\":";   j += state.seen_bms_hv;                 j += ',';
     j += "\"bms_soc_seen\":";  j += state.seen_bms_soc;                j += ',';
     j += "\"bms_thermal_seen\":"; j += state.seen_bms_thermal;          j += ',';
     j += "\"rx_count\":";      j += state.rx_count;                    j += ',';
-    j += "\"tx_count\":";      j += state.frames_modified;             j += ',';
+    j += "\"tx_count\":";      j += state.tx_count;                    j += ',';
+    j += "\"tx_modified\":";   j += state.frames_modified;             j += ',';
     j += "\"crc_errors\":";    j += state.crc_err_count;               j += ',';
     j += "\"fps\":";           j += fps_s;                             j += ',';
     j += "\"bms\":";           j += bms;                               j += ',';
@@ -1167,7 +1209,48 @@ static void ws_event(uint8_t num, WStype_t type,
             Serial.printf("[Web] NAG Killer: %s\n", enabled ? "ON" : "OFF");
             prefs_save(&saved);
         }
-    } else if (strstr(buf, "\"bms\"")) {
+    }
+#if defined(BOARD_TTGO_DISPLAY)
+    else if (strstr(buf, "\"disp\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            bool enabled = (strncmp(vptr, "true", 4) == 0);
+            FSDState saved;
+            state_enter();
+            g_state->display_enabled = enabled;
+            saved = *g_state;
+            state_exit();
+            Serial.printf("[Web] Display: %s\n", enabled ? "ON" : "OFF");
+            prefs_save(&saved);
+        }
+    } else if (strstr(buf, "\"disp_br\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            uint8_t val = (uint8_t)atoi(vptr);
+            if (val > 100) val = 100;
+            FSDState saved;
+            state_enter();
+            g_state->display_brightness = val;
+            saved = *g_state;
+            state_exit();
+            Serial.printf("[Web] Display Brightness: %u\n", val);
+            prefs_save(&saved);
+        }
+    } else if (strstr(buf, "\"disp_to\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            uint32_t val = (uint32_t)atoi(vptr);
+            FSDState saved;
+            state_enter();
+            g_state->display_timeout_s = val;
+            saved = *g_state;
+            state_exit();
+            Serial.printf("[Web] Display Timeout: %u s\n", val);
+            prefs_save(&saved);
+        }
+    }
+#endif
+    else if (strstr(buf, "\"bms\"")) {
         if (vptr) {
             while (*vptr == ' ' || *vptr == ':') vptr++;
             bool enabled = (strncmp(vptr, "true", 4) == 0);
@@ -1302,7 +1385,27 @@ static void ws_event(uint8_t num, WStype_t type,
 
 // ── HTTP handlers ─────────────────────────────────────────────────────────────
 static void handle_root() {
-    g_http.send_P(200, "text/html", WEB_HTML);
+    g_http.setContentLength(sizeof(WEB_HTML) - 1);
+    g_http.send(200, "text/html", "");
+
+    const uint8_t *ptr = (const uint8_t *)WEB_HTML;
+    size_t left = sizeof(WEB_HTML) - 1;
+    WiFiClient client = g_http.client();
+
+    uint32_t timeout_ms = millis();
+    while (left > 0 && client.connected()) {
+        size_t chunk = (left > 1460) ? 1460 : left;
+        size_t written = client.write(ptr, chunk);
+        if (written > 0) {
+            ptr += written;
+            left -= written;
+            timeout_ms = millis(); // Reset timeout
+        } else {
+            if (millis() - timeout_ms > 2000) break; // Prevent infinite loop
+            delay(10);
+        }
+        delay(2);
+    }
 }
 
 static void handle_status() {

@@ -35,7 +35,9 @@ struct FSDState {
     bool           ap_active;       // true when DAS reports AP/TACC active
     bool           nag_suppressed;  // true after first nag-killer echo sent
 
-    uint32_t       frames_modified; // TX counter
+    uint32_t       frames_modified; // count of autopilot frames (0x3FD/0x3EE) we patched
+    uint32_t       tx_count;        // total frames successfully transmitted on the bus
+                                    // (autopilot mods + nag echoes + ISA + TLSSC + precond)
 
     // ── Feature flags (runtime-toggleable) ───────────────────────────────────
     bool           fsd_unlock;              // modify autopilot FSD unlock frames
@@ -53,7 +55,8 @@ struct FSDState {
     uint8_t        ota_raw_state;           // raw GTW_updateInProgress bits [1:0]
     uint8_t        ota_assert_count;        // consecutive "in-progress" samples
     uint8_t        ota_clear_count;         // consecutive "not in-progress" samples
-    uint32_t       crc_err_count;           // legacy name; aggregate CAN driver errors
+    uint32_t       crc_err_count;           // CAN TX/bus error counter
+                                            // (MCP2515: failed sendMessage; TWAI: rx_missed+bus_err+tx_failed)
     uint32_t       rx_count;                // total frames seen (wiring check)
     uint32_t       seen_gtw_car_state;      // 0x318 seen count
     uint32_t       seen_gtw_car_config;     // 0x398 seen count
@@ -98,6 +101,12 @@ struct FSDState {
     uint8_t        das_lane_change_state;
     uint8_t        das_counter;
     uint8_t        das_checksum;
+
+#if defined(BOARD_TTGO_DISPLAY)
+    bool           display_enabled;  // Toggle for T-Display LCD/backlight
+    uint8_t        display_brightness; // 0-100%
+    uint32_t       display_timeout_s;  // Timeout in seconds
+#endif
 };
 
 // ── API ───────────────────────────────────────────────────────────────────────

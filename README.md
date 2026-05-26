@@ -109,7 +109,7 @@
 | **Lane Graph** | `0x3FD` mux1 bit45 | UI_showLaneGraph — lane visualization on non-FSD tier |
 | **Tier Override** | `0x7FF` mux=2 | Force GTW_autopilot to SELF_DRIVING (more aggressive than Ban Shield) |
 | **Dev Mode** | `0x3F8` bit5 | UI_dasDeveloper flag |
-| **Force LHD** | `0x3F8` bits 40-41 | Override driving side for RHD markets |
+| **Force LHD** | `0x3F8` bits 40-41 | UI_drivingSide signal override. **Empirically does not change FSD lane-side behavior** (tested on banned RHD HW3 / 2026.2.6 — values 0, 1, 2 all leave FSD on the LHD side; see [#66](https://github.com/hypery11/flipper-tesla-fsd/issues/66)). Likely a UI-only signal. **Slated for removal in v2.15** if no value-3 / DAS_settings counter-evidence surfaces |
 | **Hands-Off** | `0x3F8` bit14 | UI-level hands-on disable (second nag vector) |
 | **Telemetry Off** | `0x3F8` bit43 | Disable trip telemetry — may itself be a ban signal, use only with SIM pulled |
 
