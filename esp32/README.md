@@ -53,6 +53,7 @@ All CAN protocol handling from hypery11's Flipper Zero implementation (`fsd_hand
 - **Battery SOC Ring** — animated circular progress bar with color coding (green >60%, yellow >30%, red ≤30%)
 - **BMS Live Data UI hooks** — fields exist in UI/API, but BMS section is currently not working reliably on tested vehicle setup
 - **CAN Bus Stats** — RX frame count, TX modified count, CRC errors, frames/second
+- **HTTP CAN Log Stream** — phone-friendly candump collection via dashboard button; device streams CAN frames over HTTP on port 82 and the browser saves the collected `.dump` file on Stop
 - **Web Controls** — toggle buttons for:
   - Activate/Stop FSD (Listen-Only ↔ Active mode switch)
   - NAG Killer on/off
@@ -272,7 +273,9 @@ pio device monitor -b 115200
 1. Connect phone to WiFi: **Tesla-FSD** (password: **12345678**)
 2. Open browser: **http://192.168.4.1**
 3. Monitor and control everything from the web UI
-4. REST API available at `http://192.168.4.1/api/status`
+4. Tap **STREAM LOG AND SAVE** to collect a CAN log on the phone; tap **STOP COLLECTING**, then **SAVE LOG FILE** to save it as a candump `.dump` file
+5. REST API available at `http://192.168.4.1/api/status`
+6. Raw CAN stream endpoint: `http://192.168.4.1:82/stream`
 
 ---
 
@@ -309,6 +312,7 @@ esp32/
 ├── .firmware/
 │   ├── main.cpp            — Init, button handling, main loop
 │   ├── fsd_handler.cpp/h   — CAN protocol logic (ported from hypery11)
+│   ├── http_can_stream.cpp/h — HTTP candump-compatible CAN stream
 │   ├── can_driver.cpp/h    — CAN driver abstraction (TWAI / MCP2515)
 │   ├── wifi_manager.cpp/h  — WiFi AP setup
 │   ├── web_dashboard.cpp/h — HTTP server + WebSocket + embedded UI

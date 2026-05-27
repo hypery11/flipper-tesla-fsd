@@ -11,6 +11,7 @@
 
 #include "web_dashboard.h"
 #include "can_dump.h"
+#include "http_can_stream.h"
 #include "prefs.h"
 #include <WebServer.h>
 #include <WebSocketsServer.h>
@@ -216,6 +217,12 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
   color:var(--text);border-radius:8px;padding:11px;font-size:1em}
 .auth-actions{display:flex;gap:10px;margin-top:16px}
 .auth-actions button{flex:1;margin:0}
+.log-info{font-size:.74em;color:var(--text2);line-height:1.45;margin-top:8px}
+.log-actions{display:flex;gap:10px;margin-top:12px}
+.log-actions button{flex:1;margin:0}
+.log-filter{width:210px;max-width:60%;background:var(--card2);border:1px solid var(--border);
+  color:var(--text);border-radius:6px;padding:6px 8px;font-size:.8em;text-align:right}
+.log-filter::placeholder{color:var(--text3)}
 </style>
 </head>
 <body>
@@ -322,6 +329,35 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <div class="sb"><div class="sv" id="txCnt">0</div><div class="sl">TX Frames</div></div>
     <div class="sb"><div class="sv" id="crcErr">0</div><div class="sl">TX Errors</div></div>
     <div class="sb"><div class="sv" id="fps">0.0</div><div class="sl">Frames/s</div></div>
+  </div>
+</div>
+
+<!-- HTTP CAN Log -->
+<div class="card">
+  <div class="card-head"><div class="icon ic-d">L</div><h2>HTTP CAN Log</h2></div>
+  <div class="row">
+    <span class="lbl">Stream</span>
+    <span class="pill off" id="httpLogSt"><span class="pd"></span>Idle</span>
+  </div>
+  <div class="row">
+    <span class="lbl">Filter IDs</span>
+    <input id="httpLogFilter" class="log-filter" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="0x370, 0x3FD">
+  </div>
+  <div class="row">
+    <span class="lbl">Buffered</span>
+    <span id="httpLogBuf" style="font-size:.8em;color:var(--text2)">0 frames</span>
+  </div>
+  <div class="row">
+    <span class="lbl">Dropped</span>
+    <span id="httpLogDrop" style="font-size:.8em;color:var(--text2)">0 frames</span>
+  </div>
+  <div class="row">
+    <span class="lbl">Filtered</span>
+    <span id="httpLogFiltered" style="font-size:.8em;color:var(--text2)">0 frames</span>
+  </div>
+  <div id="httpLogInfo" class="log-info">Ready to collect a candump file in this browser.</div>
+  <div class="log-actions">
+    <button id="btnHttpLog" type="button" class="btn-main btn-blue" onclick="toggleHttpLog()">STREAM LOG AND SAVE</button>
   </div>
 </div>
 
@@ -473,6 +509,9 @@ R"rawliteral(</div>
 
 <script>
 var ws,rt,busy=0,wifiOnce=false,authHeader='',authAction=null,restartAnchor=null;
+var httpLogAbort=null,httpLogReader=null,httpLogParts=[],httpLogBytes=0,httpLogStarted=0,httpLogRunning=false;
+var httpLogName='',httpLogReady=false,httpLogSaveUrl='';
+var httpLogAllowed=true;
 var HW=['Unknown','Legacy','HW3','HW4'];
 var CIRC=326.73;
 
@@ -554,6 +593,27 @@ function upd(d){
   if(document.getElementById('txCnt')) document.getElementById('txCnt').textContent=(d.tx_count||0).toLocaleString();
   if(document.getElementById('crcErr')) document.getElementById('crcErr').textContent=d.crc_errors||0;
   if(document.getElementById('fps')) document.getElementById('fps').textContent=(d.fps||0.0).toFixed(1);
+  httpLogAllowed=d.op_mode!==1;
+  if(!httpLogAllowed&&httpLogRunning){
+    stopHttpLog('HTTP CAN log stopped because device entered Active mode.');
+  }
+  if(!httpLogRunning)setHttpLogUi(false);
+  if(!httpLogRunning){
+    if(httpLogReady){
+      pill('httpLogSt',true,'Ready');
+    }else{
+      pill('httpLogSt', d.http_can_stream && d.http_can_stream.active,
+        httpLogAllowed?((d.http_can_stream && d.http_can_stream.active)?'Streaming':'Idle'):'Disabled');
+    }
+  }
+  if(!httpLogRunning&&!httpLogReady&&document.getElementById('httpLogInfo')&&!httpLogAllowed)
+    logInfo('HTTP CAN log is available only in Listen-Only mode.','var(--yellow)');
+  if(document.getElementById('httpLogBuf'))
+    document.getElementById('httpLogBuf').textContent=((d.http_can_stream&&d.http_can_stream.buffered)||0)+' frames';
+  if(document.getElementById('httpLogDrop'))
+    document.getElementById('httpLogDrop').textContent=((d.http_can_stream&&d.http_can_stream.dropped)||0)+' frames';
+  if(document.getElementById('httpLogFiltered'))
+    document.getElementById('httpLogFiltered').textContent=((d.http_can_stream&&d.http_can_stream.filtered)||0)+' frames';
 
   // Battery
   if(d.bms && d.bms.seen){
@@ -740,6 +800,191 @@ function cmd(c,v){
 }
 function toggleMode(){ cmd('mode',null); }
 
+function logInfo(text,color){
+  var e=document.getElementById('httpLogInfo');
+  if(!e)return;
+  e.textContent=text;
+  e.style.color=color||'var(--text2)';
+}
+
+function setHttpLogUi(running){
+  var btn=document.getElementById('btnHttpLog');
+  if(btn){
+    btn.disabled=!httpLogAllowed&&!httpLogReady;
+    btn.style.opacity=btn.disabled?'.45':'1';
+    if(running){
+      btn.textContent='STOP COLLECTING';
+      btn.className='btn-main btn-stop';
+    }else if(httpLogReady){
+      btn.textContent='SAVE LOG FILE';
+      btn.className='btn-main btn-blue';
+    }else if(!httpLogAllowed){
+      btn.textContent='LISTEN-ONLY REQUIRED';
+      btn.className='btn-main btn-blue';
+    }else{
+      btn.textContent='STREAM LOG AND SAVE';
+      btn.className='btn-main btn-blue';
+    }
+  }
+  var filterEl=document.getElementById('httpLogFilter');
+  if(filterEl)filterEl.disabled=running;
+  pill('httpLogSt',running||httpLogReady,running?'Collecting':(httpLogReady?'Ready':'Idle'));
+}
+
+function formatBytes(n){
+  if(n<1024)return n+' B';
+  if(n<1048576)return (n/1024).toFixed(1)+' KB';
+  return (n/1048576).toFixed(1)+' MB';
+}
+
+function logFileName(){
+  var d=new Date();
+  function p(n){return n<10?'0'+n:''+n;}
+  return 'tesla_can_'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'_'
+    +p(d.getHours())+p(d.getMinutes())+p(d.getSeconds())+'.dump';
+}
+
+function clearHttpLogBlob(){
+  if(httpLogSaveUrl)URL.revokeObjectURL(httpLogSaveUrl);
+  httpLogSaveUrl='';
+  httpLogName='';
+  httpLogReady=false;
+}
+
+function prepareHttpLogFile(){
+  clearHttpLogBlob();
+  if(httpLogBytes===0){
+    logInfo('No CAN frames collected. Nothing saved.','var(--yellow)');
+    httpLogParts=[];
+    setHttpLogUi(false);
+    return;
+  }
+  httpLogName=logFileName();
+  httpLogReady=true;
+  setHttpLogUi(false);
+  logInfo('Log ready in phone memory: '+httpLogName+' ('+formatBytes(httpLogBytes)+'). Tap SAVE LOG FILE.','var(--accent)');
+}
+
+function savePreparedHttpLog(){
+  if(!httpLogReady||httpLogBytes===0)return;
+  var blob=new Blob(httpLogParts,{type:'text/plain;charset=utf-8'});
+  if(blob.size===0){
+    logInfo('No CAN frames collected. Nothing saved.','var(--yellow)');
+    return;
+  }
+  if(window.File&&navigator.canShare&&navigator.share){
+    var file=new File([blob],httpLogName,{type:'text/plain'});
+    if(navigator.canShare({files:[file]})){
+      navigator.share({files:[file],title:httpLogName}).then(function(){
+        logInfo('Save/share requested for '+httpLogName+'.','var(--accent)');
+      }).catch(function(err){
+        logInfo('Share cancelled or failed: '+(err&&err.message?err.message:'unknown')+'. Trying download link...','var(--yellow)');
+        downloadHttpLogBlob(blob);
+      });
+      return;
+    }
+  }
+  downloadHttpLogBlob(blob);
+}
+
+function downloadHttpLogBlob(blob){
+  if(httpLogSaveUrl)URL.revokeObjectURL(httpLogSaveUrl);
+  httpLogSaveUrl=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=httpLogSaveUrl;
+  a.download=httpLogName;
+  a.rel='noopener';
+  a.textContent=httpLogName;
+  a.style.position='fixed';
+  a.style.left='0';
+  a.style.bottom='0';
+  a.style.opacity='0.01';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function(){a.remove();},1000);
+  logInfo('Save requested for '+httpLogName+'. If no file appears, tap SAVE LOG FILE again or use another browser.','var(--accent)');
+}
+
+function stopHttpLog(reason){
+  if(!httpLogRunning)return;
+  httpLogRunning=false;
+  if(httpLogReader)httpLogReader.cancel().catch(function(){});
+  if(httpLogAbort)httpLogAbort.abort();
+  httpLogReader=null;
+  httpLogAbort=null;
+  prepareHttpLogFile();
+  if(reason){
+    if(httpLogReady){
+      logInfo(reason+' Log ready in phone memory: '+httpLogName+' ('+formatBytes(httpLogBytes)+'). Tap SAVE LOG FILE.','var(--yellow)');
+    }else{
+      logInfo(reason,'var(--yellow)');
+    }
+  }
+}
+
+function startHttpLog(){
+  if(httpLogRunning)return;
+  if(!httpLogAllowed){
+    logInfo('Switch to Listen-Only mode before starting HTTP CAN log.','var(--yellow)');
+    setHttpLogUi(false);
+    return;
+  }
+  if(!window.ReadableStream){
+    alert('This browser does not support HTTP stream collection.');
+    return;
+  }
+  httpLogParts=[];
+  httpLogBytes=0;
+  clearHttpLogBlob();
+  httpLogStarted=Date.now();
+  httpLogRunning=true;
+  httpLogAbort=new AbortController();
+  setHttpLogUi(true);
+  logInfo('Connecting to HTTP stream...');
+
+  var streamUrl='http://'+location.hostname+':82/stream';
+  var filterEl=document.getElementById('httpLogFilter');
+  var filter=(filterEl&&filterEl.value)?filterEl.value.trim():'';
+  if(filter)streamUrl+='?ids='+encodeURIComponent(filter);
+
+  fetch(streamUrl,{cache:'no-store',signal:httpLogAbort.signal})
+    .then(function(r){
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      if(!r.body)throw new Error('Readable stream unavailable');
+      logInfo('Collecting 0 B...');
+      var reader=r.body.getReader();
+      httpLogReader=reader;
+      function pump(){
+        return reader.read().then(function(result){
+          if(result.done)return;
+          if(result.value&&result.value.length){
+            httpLogParts.push(result.value);
+            httpLogBytes+=result.value.length;
+            var secs=Math.max(1,Math.round((Date.now()-httpLogStarted)/1000));
+            logInfo('Collecting '+formatBytes(httpLogBytes)+' for '+secs+'s...');
+          }
+          return pump();
+        });
+      }
+      return pump();
+    })
+    .catch(function(err){
+      if(!httpLogRunning)return;
+      httpLogRunning=false;
+      httpLogReader=null;
+      httpLogAbort=null;
+      setHttpLogUi(false);
+      logInfo('Stream stopped: '+(err&&err.message?err.message:'connection closed'),'var(--yellow)');
+      if(httpLogBytes>0)prepareHttpLogFile();
+    });
+}
+
+function toggleHttpLog(){
+  if(httpLogRunning)stopHttpLog();
+  else if(httpLogReady)savePreparedHttpLog();
+  else startHttpLog();
+}
+
 function conn(){
   ws=new WebSocket('ws://'+location.hostname+':81/');
   ws.onopen=function(){
@@ -852,6 +1097,12 @@ static String build_json() {
     j += "\"wifi_pass\":\"***\",";
     j += "\"wifi_hidden\":";  j += state.wifi_hidden                  ? "true" : "false"; j += ',';
     j += "\"wifi_clients\":";  j += (int)WiFi.softAPgetStationNum();   j += ',';
+    j += "\"http_can_stream\":{";
+    j += "\"active\":";       j += http_can_stream_active()           ? "true" : "false"; j += ',';
+    j += "\"sent\":";         j += http_can_stream_frames_sent();      j += ',';
+    j += "\"dropped\":";      j += http_can_stream_frames_dropped();   j += ',';
+    j += "\"filtered\":";     j += http_can_stream_frames_filtered();  j += ',';
+    j += "\"buffered\":";     j += http_can_stream_buffered_frames();  j += "},";
     j += "\"ota_partition\":"; j += ota_part;
     j += '}';
     return j;
@@ -892,6 +1143,7 @@ static void ws_event(uint8_t num, WStype_t type,
         saved = *g_state;
         state_exit();
         if (g_can) g_can->setListenOnly(!active);
+        http_can_stream_set_enabled(!active);
         Serial.println(active ? "[Web] → Active mode" : "[Web] → Listen-Only mode");
         prefs_save(&saved);
     } else if (strstr(buf, "\"nag\"")) {
@@ -1286,6 +1538,7 @@ void web_dashboard_init(FSDState *state, CanDriver *can, portMUX_TYPE *state_mux
     g_http.on("/restart",    HTTP_GET,  handle_restart);
     g_http.on("/update",     HTTP_POST, handle_ota_done, handle_ota_upload);
     g_http.begin();
+    http_can_stream_init();
 
     g_ws.begin();
     g_ws.onEvent(ws_event);
@@ -1298,6 +1551,7 @@ void web_dashboard_update() {
 
     g_http.handleClient();
     g_ws.loop();
+    http_can_stream_update();
 
     // FPS calculation + 1 Hz WebSocket broadcast
     uint32_t now = millis();

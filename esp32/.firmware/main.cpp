@@ -25,6 +25,7 @@
 #include "wifi_manager.h"
 #include "web_dashboard.h"
 #include "can_dump.h"
+#include "http_can_stream.h"
 #include "prefs.h"
 #if defined(BOARD_TTGO_DISPLAY)
 #include "display.h"
@@ -112,6 +113,7 @@ static void dispatch_clicks(int n) {
         saved = g_state;
         state_exit();
         g_can->setListenOnly(!active);
+        http_can_stream_set_enabled(!active);
         Serial.println(active ? "[BTN] → Active mode" : "[BTN] → Listen-Only mode");
         can_dump_log(active ? "MODE switched to Active — TX enabled" : "MODE switched to Listen-Only — TX disabled");
         prefs_save(&saved);
@@ -252,6 +254,9 @@ static void process_frame(const CanFrame &frame) {
     state_exit();
 
     can_dump_record(frame);
+    if (state_snapshot().op_mode == OpMode_ListenOnly) {
+        http_can_stream_record(frame);
+    }
 #if defined(BOARD_LILYGO)
     g_last_can_rx_ms = millis();
     g_sleep_warned   = false;
@@ -570,6 +575,7 @@ void setup() {
     // ── WiFi AP + Web dashboard (non-fatal if WiFi fails) ─────────────────────
     if (wifi_ap_init(&g_state)) {
         web_dashboard_init(&g_state, g_can, &g_state_mux);
+        http_can_stream_set_enabled(state_snapshot().op_mode == OpMode_ListenOnly);
     }
 }
 
