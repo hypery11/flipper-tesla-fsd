@@ -120,9 +120,27 @@
 #define SIG_DAS_AP_CONFIG_KEEP_MASK      0xC0u
 #define SIG_DAS_AP_CONFIG_SELF_DRIVING   0x1Bu
 
-// DAS status (0x39B in the current handler)
+// DAS status
+// Legacy/HW3 source: 0x399
+// HW4 source:        0x39B
+// byte 0: AP / Autosteer state
+// bytes 1-2: speed limit / speed warning state
+// bytes 5-6: hands-on / lane-change state
+// bytes 6-7: counter / checksum
+#define SIG_DAS_HW3_AP_STATE_BYTE           0
+#define SIG_DAS_HW3_AP_STATE_MASK        0x0Fu
+#define SIG_DAS_HW3_AP_ACTIVE_STATE         3u
+#define SIG_DAS_HW4_AP_STATE_BYTE           1
+#define SIG_DAS_HW4_AP_STATE_SHIFT          4
+#define SIG_DAS_HW4_AP_STATE_MASK        0x0Fu
+#define SIG_DAS_HW4_AP_ACTIVE_MIN           2u
+#define SIG_DAS_SPEED_LIMIT_BYTE_1          1
+#define SIG_DAS_SPEED_LIMIT_BYTE_2          2
 #define SIG_DAS_HANDS_ON_STATE_BYTE         5
 #define SIG_DAS_HANDS_ON_STATE_SHIFT        2
 #define SIG_DAS_HANDS_ON_STATE_MASK      0x0Fu
+#define SIG_DAS_LANE_CHANGE_STATE_BYTE      6
+#define SIG_DAS_COUNTER_BYTE                6
+#define SIG_DAS_CHECKSUM_BYTE               7
 #define SIG_DAS_HANDS_ON_NOT_REQUIRED       0u
 #define SIG_DAS_HANDS_ON_SUSPENDED          8u

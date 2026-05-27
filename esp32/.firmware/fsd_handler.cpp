@@ -464,13 +464,42 @@ bool fsd_handle_tlssc_restore(FSDState *state, CanFrame *frame) {
     return true;
 }
 
-// ── DAS status (0x39B) — nag killer gating ───────────────────────────────────
+static void fsd_handle_das_status_common(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc != CAN_FRAME_MAX_DATA_LEN) return;
 
-void fsd_handle_das_status(FSDState *state, const CanFrame *frame) {
-    if (frame->dlc < 6) return;
-    // DAS_autopilotHandsOnState: bit42|4 LE → byte5 bits[5:2]
+    state->das_speed_limit_1 = frame->data[SIG_DAS_SPEED_LIMIT_BYTE_1];
+    state->das_speed_limit_2 = frame->data[SIG_DAS_SPEED_LIMIT_BYTE_2];
+
+    // DAS_autopilotHandsOnState: byte5 bits[5:2].
     state->das_hands_on_state =
         (frame->data[SIG_DAS_HANDS_ON_STATE_BYTE] >> SIG_DAS_HANDS_ON_STATE_SHIFT) &
         SIG_DAS_HANDS_ON_STATE_MASK;
+    state->das_lane_change_state = frame->data[SIG_DAS_LANE_CHANGE_STATE_BYTE];
+    state->das_counter = frame->data[SIG_DAS_COUNTER_BYTE];
+    state->das_checksum = frame->data[SIG_DAS_CHECKSUM_BYTE];
     state->das_seen = true;
+}
+
+// ── DAS status — nag killer gating / AP active status ────────────────────────
+
+void fsd_handle_das_status_hw3(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc != CAN_FRAME_MAX_DATA_LEN) return;
+
+    // Legacy/HW3 0x399 layout: DAS_autopilotState is byte0 low nibble.
+    // Observed HW3 mapping: 2=available/ready, 3=engaged.
+    state->das_ap_state =
+        frame->data[SIG_DAS_HW3_AP_STATE_BYTE] & SIG_DAS_HW3_AP_STATE_MASK;
+    state->ap_active = state->das_ap_state == SIG_DAS_HW3_AP_ACTIVE_STATE;
+    fsd_handle_das_status_common(state, frame);
+}
+
+void fsd_handle_das_status_hw4(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc != CAN_FRAME_MAX_DATA_LEN) return;
+
+    // HW4 0x39B layout from the original parser: bit12|4 = byte1 bits[7:4].
+    state->das_ap_state =
+        (frame->data[SIG_DAS_HW4_AP_STATE_BYTE] >> SIG_DAS_HW4_AP_STATE_SHIFT) &
+        SIG_DAS_HW4_AP_STATE_MASK;
+    state->ap_active = state->das_ap_state >= SIG_DAS_HW4_AP_ACTIVE_MIN;
+    fsd_handle_das_status_common(state, frame);
 }
