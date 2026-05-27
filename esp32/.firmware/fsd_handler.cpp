@@ -306,7 +306,7 @@ bool fsd_handle_isa_speed_chime(CanFrame *frame) {
 
 // ── NAG killer: counter+1 echo of EPAS3P_sysStatus (0x370) ──────────────────
 //
-// When handsOnLevel == 0 (nag imminent) or 3 (escalated alarm), we send a
+// When handsOnLevel == 0 (nag imminent), 2 (marginal), or 3 (escalated), we send a
 // spoofed EPAS frame with handsOnLevel=1 and counter+1 before the real frame
 // reaches the DAS.  The DAS sees "hands on" and drops the nag.
 //
@@ -315,10 +315,10 @@ bool fsd_handle_isa_speed_chime(CanFrame *frame) {
 // to avoid ~25 spurious frames/sec on the bus.  The echo is also gated on
 // ap_active so Active mode does not spam EPAS echoes while the car is parked.
 //
-// Organic torque: torsionBarTorque uses a xorshift32 random walk [1.00–2.40 Nm]
-// with brief grip pulses [3.10–3.30 Nm] every 5–9 s.  A flat signal for 30+
-// minutes is a statistical impossibility from a real hand and is a known
-// telemetry detection vector.
+// Organic torque: torsionBarTorque uses a xorshift32 random walk [1.00–2.40 Nm].
+// On first spoof and on each handsOnLevel transition into an eligible nag state,
+// it sends an immediate 3-5 frame grip pulse [3.10–3.30 Nm], then resets the
+// periodic 5-9 s pulse countdown.
 //
 // Checksum: byte7 = (sum(byte0..6) + 0x70 + 0x03) & 0xFF  (CAN ID 0x370 split)
 
@@ -326,6 +326,8 @@ static uint32_t nag_prng_state       = 0xDEADBEEFu;
 static int16_t  nag_torq_walk        = 2230;   // raw init ≈ 1.80 Nm
 static uint8_t  nag_exc_frames       = 0;
 static uint16_t nag_frames_until_exc = 175;
+static uint8_t  nag_last_hands_on    = 0xFFu;
+static bool     nag_session_active   = false;
 
 static uint32_t nag_xorshift32() {
     uint32_t x = nag_prng_state;
@@ -336,42 +338,77 @@ static uint32_t nag_xorshift32() {
     return x;
 }
 
+static void nag_schedule_periodic_pulse() {
+    nag_frames_until_exc = (uint16_t)(125u + (nag_xorshift32() % 100u));
+}
+
+static void nag_start_grip_pulse() {
+    nag_exc_frames = (uint8_t)(3u + (nag_xorshift32() % 3u));
+    nag_schedule_periodic_pulse();
+}
+
+static void nag_reset_session(uint8_t hands_on) {
+    nag_last_hands_on  = hands_on;
+    nag_session_active = false;
+    nag_exc_frames     = 0;
+}
+
+static int16_t nag_grip_pulse_torque() {
+    // Raw torque: Nm = raw * 0.01 - 20.5. 2360-2380 => 3.10-3.30 Nm.
+    return (int16_t)(2360 + (int)(nag_xorshift32() % 21u));
+}
+
+static int16_t nag_random_walk_torque() {
+    int16_t step = (int16_t)((int)(nag_xorshift32() % 31u) - 15);
+    nag_torq_walk += step;
+    if (nag_torq_walk < 2150) nag_torq_walk = 2150;  // min ~1.00 Nm
+    if (nag_torq_walk > 2290) nag_torq_walk = 2290;  // max ~2.40 Nm
+    return nag_torq_walk;
+}
+
 bool fsd_handle_nag_killer(FSDState *state, const CanFrame *frame, CanFrame *out) {
-    if (frame->dlc < 8)     return false;
-    if (!state->nag_killer) return false;
+    if (frame->dlc < 8) return false;
 
     // EPAS handsOnLevel: bits 7:6 of byte 4.  Skip only when level==1 (hands OK).
     uint8_t hands_on = (frame->data[SIG_EPAS_HANDS_ON_BYTE] >> SIG_EPAS_HANDS_ON_SHIFT) &
                        SIG_EPAS_HANDS_ON_MASK;
 
-    if (!state->ap_active) return false;
+    if (!state->nag_killer || !state->ap_active) {
+        nag_reset_session(hands_on);
+        return false;
+    }
 
-    if (hands_on == SIG_EPAS_HANDS_ON_OK) return false;
+    if (hands_on == SIG_EPAS_HANDS_ON_OK) {
+        nag_reset_session(hands_on);
+        return false;
+    }
 
     // DAS-aware gating — skip echo when DAS itself is satisfied.
     if (state->das_seen) {
         uint8_t das = state->das_hands_on_state;
-        if (das == SIG_DAS_HANDS_ON_NOT_REQUIRED || das == SIG_DAS_HANDS_ON_SUSPENDED)
+        if (das == SIG_DAS_HANDS_ON_NOT_REQUIRED || das == SIG_DAS_HANDS_ON_SUSPENDED) {
+            nag_reset_session(hands_on);
             return false;
+        }
     }
 
-    // Organic torque random walk
+    if (!nag_session_active || nag_last_hands_on != hands_on) {
+        nag_session_active = true;
+        nag_torq_walk = 2300; // first post-transition baseline: ~2.50 Nm
+        nag_start_grip_pulse();
+    }
+    nag_last_hands_on = hands_on;
+
     int16_t torq;
     if (nag_exc_frames > 0) {
-        // Grip pulse: ~3.20 Nm ± noise
-        torq = 2350 + (int16_t)((int)(nag_xorshift32() % 41u) - 20);
+        torq = nag_grip_pulse_torque();
         nag_exc_frames--;
     } else {
-        int16_t step = (int16_t)((int)(nag_xorshift32() % 31u) - 15);
-        nag_torq_walk += step;
-        if (nag_torq_walk < 2150) nag_torq_walk = 2150;  // min ~1.00 Nm
-        if (nag_torq_walk > 2290) nag_torq_walk = 2290;  // max ~2.40 Nm
-        torq = nag_torq_walk;
+        torq = nag_random_walk_torque();
         if (nag_frames_until_exc > 0) {
             nag_frames_until_exc--;
         } else {
-            nag_exc_frames       = (uint8_t)(3u + (nag_xorshift32() % 3u));
-            nag_frames_until_exc = (uint16_t)(125u + (nag_xorshift32() % 100u));
+            nag_start_grip_pulse();
         }
     }
 
