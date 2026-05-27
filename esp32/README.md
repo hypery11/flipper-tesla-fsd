@@ -34,7 +34,8 @@ All CAN protocol handling from hypery11's Flipper Zero implementation (`fsd_hand
 - NAG Killer (EPAS `0x370` counter+1 echo with handsOnLevel spoofing)
 - Speed profile mapping from follow-distance stalk
 - OTA update detection and automatic TX suspension
-- ISA speed warning chime suppression (HW4)
+- HW-based AP/DAS mapping for Legacy/HW3 vs HW4 signal layouts
+- ISA speed warning chime suppression (HW4 only)
 - BMS data parsing logic (voltage, current, SOC, temperature) — currently not reliable in real use
 - Battery precondition trigger
 - CRC/checksum recalculation after frame modification
@@ -70,6 +71,18 @@ Dual CAN driver support (compile-time switch):
 - **ESP32 TWAI** — for M5Stack ATOM Lite + ATOMIC CAN Base (CA-IS3050G transceiver)
 - **MCP2515 SPI** — for generic ESP32 + MCP2515 CAN module setups
 
+### HW-Based AP/DAS Mapping
+
+The AP/DAS status source is selected at runtime from the detected Tesla hardware version:
+
+| Detected HW | DAS status | ISA_SPEED / chime suppress |
+|-------------|------------|-----------------------------|
+| Legacy HW1/HW2 | `0x399` | Disabled; `0x399` is treated as DAS status |
+| HW3 | `0x399` | Disabled; `0x399` is treated as DAS status |
+| HW4 | `0x39B` | Enabled on `0x399` |
+
+This avoids a manual AP/DAS profile. The dashboard hides the chime toggle until HW4 is detected.
+
 ---
 
 ## Features
@@ -79,7 +92,8 @@ Dual CAN driver support (compile-time switch):
 | **FSD Unlock** | `0x3FD` mux0 | bit46 = 1 activates FSD (HW3/HW4/Legacy) |
 | **NAG Killer** | `0x370` | Suppresses hands-on-wheel reminder |
 | **Speed Profile** | `0x3FD` mux2 | Follow-distance stalk maps to speed offset |
-| **ISA Chime Suppress** | `0x399` | Kills speed warning chime (HW4 only) |
+| **DAS Status** | `0x399` or `0x39B` | Runtime HW version selects status source |
+| **ISA Chime Suppress** | `0x399` | HW4 only; disabled for Legacy/HW3 because `0x399` is DAS status |
 | **Battery Precondition** | `0x082` | Frame builder implemented; no user control exposed yet |
 | **BMS Dashboard** | `0x132`/`0x292`/`0x312` | Parsing/UI path implemented, but currently not working reliably |
 | **OTA Protection** | `0x318` | Auto-stops TX when OTA update detected |
@@ -169,6 +183,8 @@ Located in the rear center console area:
 
 ## CAN Bus Details
 
+Most IDs are common. The AP/DAS status and ISA-speed meaning depends on the detected Tesla hardware version.
+
 | CAN ID | Name | Purpose |
 |--------|------|---------|
 | `0x045` | STW_ACTN_RQ | Steering stalk (Legacy follow distance) |
@@ -179,10 +195,17 @@ Located in the rear center console area:
 | `0x318` | GTW_CAR_STATE | Vehicle state (OTA detection) |
 | `0x370` | EPAS_STATUS | EPAS status (NAG killer target) |
 | `0x398` | GTW_CAR_CONFIG | HW version detection |
-| `0x399` | ISA_SPEED | Speed warning chime (HW4) |
 | `0x3EE` | AP_LEGACY | Autopilot control (Legacy / HW1 / HW2) |
 | `0x3F8` | FOLLOW_DIST | Follow distance / speed profile |
 | `0x3FD` | AP_CONTROL | **Autopilot control (HW3/HW4) — core** |
+
+HW-specific IDs:
+
+| Detected HW | `0x399` | `0x39B` |
+|-------------|---------|---------|
+| Legacy HW1/HW2 | `DAS_STATUS` — AP / Autosteer state, speed-limit data, hands-on / lane-change state | Not used |
+| HW3 | `DAS_STATUS` — AP / Autosteer state, speed-limit data, hands-on / lane-change state | Not used |
+| HW4 | `ISA_SPEED` — speed warning chime | `DAS_STATUS` — AP / hands-on state (NAG killer gating) |
 
 Bus speed: **500 kbps**
 

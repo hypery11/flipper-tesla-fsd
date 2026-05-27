@@ -430,11 +430,37 @@ bool fsd_handle_tlssc_restore(FSDState *state, CanFrame *frame) {
     return true;
 }
 
-// ── DAS status (0x39B) — nag killer gating ───────────────────────────────────
+static void fsd_handle_das_status_common(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc != 8) return;
 
-void fsd_handle_das_status(FSDState *state, const CanFrame *frame) {
-    if (frame->dlc < 6) return;
-    // DAS_autopilotHandsOnState: bit42|4 LE → byte5 bits[5:2]
+    state->das_speed_limit_1 = frame->data[1];
+    state->das_speed_limit_2 = frame->data[2];
+
+    // DAS_autopilotHandsOnState: byte5 bits[5:2].
     state->das_hands_on_state = (frame->data[5] >> 2) & 0x0Fu;
+    state->das_lane_change_state = frame->data[6];
+    state->das_counter = frame->data[6];
+    state->das_checksum = frame->data[7];
     state->das_seen = true;
+}
+
+// ── DAS status — nag killer gating / AP active status ────────────────────────
+
+void fsd_handle_das_status_hw3(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc != 8) return;
+
+    // Legacy/HW3 0x399 layout: DAS_autopilotState is byte0 low nibble.
+    // Observed HW3 mapping: 2=available/ready, 3=engaged.
+    state->das_ap_state = frame->data[0] & 0x0Fu;
+    state->ap_active = state->das_ap_state == 3u;
+    fsd_handle_das_status_common(state, frame);
+}
+
+void fsd_handle_das_status_hw4(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc != 8) return;
+
+    // HW4 0x39B layout from the original parser: bit12|4 = byte1 bits[7:4].
+    state->das_ap_state = (frame->data[1] >> 4) & 0x0Fu;
+    state->ap_active = state->das_ap_state >= 2u;
+    fsd_handle_das_status_common(state, frame);
 }

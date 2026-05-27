@@ -262,7 +262,7 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
 <div class="card">
   <div class="card-head"><div class="icon ic-s">S</div><h2>FSD Status</h2></div>
   <div class="row">
-    <span class="lbl">FSD Active</span>
+    <span class="lbl">AP Status</span>
     <span class="pill off" id="fsdSt"><span class="pd"></span>--</span>
   </div>
   <div class="row">
@@ -345,7 +345,7 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <span class="lbl">China Mode</span>
     <label class="sw"><input type="checkbox" id="swChina" onchange="cmd('china_mode',this.checked)"><span class="sl2"></span></label>
   </div>
-  <div class="row">
+  <div class="row" id="rowChime">
     <span class="lbl">Suppress Chime</span>
     <label class="sw"><input type="checkbox" id="swChime" onchange="cmd('suppress_speed_chime',this.checked)"><span class="sl2"></span></label>
   </div>
@@ -503,7 +503,8 @@ function ring(p){
 function upd(d){
   if(!d || Date.now() < busy) return;
   // Status
-  pill('fsdSt', d.fsd_enabled, d.fsd_enabled?'Active':'Waiting');
+  var apActive=!!d.ap_active;
+  pill('fsdSt', apActive, apActive?'Active':'Waiting');
   pill('opMode', d.op_mode===1, d.op_mode===1?'Active':'Listen-Only');
 
   var hwEl=document.getElementById('hwVer');
@@ -536,6 +537,7 @@ function upd(d){
   if(document.getElementById('swFsd')) document.getElementById('swFsd').checked=d.force_fsd;
   if(document.getElementById('swChina')) document.getElementById('swChina').checked=d.china_mode;
   if(document.getElementById('swChime')) document.getElementById('swChime').checked=d.suppress_speed_chime;
+  if(document.getElementById('rowChime')) document.getElementById('rowChime').style.display=d.isa_speed_enabled?'flex':'none';
   if(document.getElementById('swTlssc')) document.getElementById('swTlssc').checked=d.tlssc_restore;
   if(document.getElementById('swDisp')) document.getElementById('swDisp').checked=!!d.display_enabled;
   if(document.activeElement.id!=='dispBr' && document.getElementById('dispBr'))
@@ -817,12 +819,22 @@ static String build_json() {
     snprintf(fps_s, sizeof(fps_s), "%.1f", g_fps);
 
     String j;
-    j.reserve(768);
+    bool isa_speed_enabled = state.hw_version == TeslaHW_HW4;
+    const char *ap_das_profile =
+        (state.hw_version == TeslaHW_HW4) ? "HW4: DAS 0x39B + ISA 0x399" :
+        (state.hw_version == TeslaHW_HW3) ? "HW3: DAS 0x399" :
+        (state.hw_version == TeslaHW_Legacy) ? "Legacy: DAS 0x399" :
+        "Waiting for HW detection";
+
+    j.reserve(900);
     j  = "{";
     j += "\"fsd_enabled\":";   j += state.fsd_enabled                 ? "true" : "false"; j += ',';
+    j += "\"ap_active\":";     j += state.ap_active                   ? "true" : "false"; j += ',';
     j += "\"op_mode\":";       j += (int)state.op_mode;                j += ',';
     j += "\"hw_version\":";    j += (int)state.hw_version;             j += ',';
     j += "\"ota\":";           j += state.tesla_ota_in_progress        ? "true" : "false"; j += ',';
+    j += "\"ap_das_profile\":\""; j += ap_das_profile;                 j += "\",";
+    j += "\"isa_speed_enabled\":"; j += isa_speed_enabled              ? "true" : "false"; j += ',';
     j += "\"nag_killer\":";    j += state.nag_killer                   ? "true" : "false"; j += ',';
     j += "\"bms_output\":";    j += state.bms_output                   ? "true" : "false"; j += ',';
     j += "\"force_fsd\":";     j += state.force_fsd                    ? "true" : "false"; j += ',';

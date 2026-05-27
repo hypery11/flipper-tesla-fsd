@@ -54,6 +54,23 @@ static FSDState state_snapshot() {
     return s;
 }
 
+static bool hw_uses_hw3_das_status(TeslaHWVersion hw) {
+    return hw == TeslaHW_Legacy || hw == TeslaHW_HW3;
+}
+
+static bool hw_uses_hw4_das_status(TeslaHWVersion hw) {
+    return hw == TeslaHW_HW4;
+}
+
+static bool frame_looks_like_hw3_das_status(const CanFrame &frame) {
+    if (frame.id != CAN_ID_DAS_STATUS_HW3 || frame.dlc != 8) return false;
+
+    uint8_t ap_state = frame.data[0] & 0x0Fu;
+    uint8_t hands_on = (frame.data[5] >> 2) & 0x0Fu;
+
+    return ap_state <= 3u && hands_on <= 8u;
+}
+
 static void apply_detected_hw(TeslaHWVersion hw, const char *reason) {
     if (hw == TeslaHW_Unknown) return;
     state_enter();
@@ -293,7 +310,19 @@ static void process_frame(const CanFrame &frame) {
     if (frame.id == CAN_ID_BMS_THERMAL) { state_enter(); fsd_handle_bms_thermal(&g_state, &frame); state_exit(); return; }
 
     // ── DAS status (read-only, always) — gating for NAG killer ───────────────
-    if (frame.id == CAN_ID_DAS_STATUS)  { state_enter(); fsd_handle_das_status(&g_state, &frame);  state_exit(); return; }
+    FSDState das_state = state_snapshot();
+    if (hw_uses_hw3_das_status(das_state.hw_version) && frame.id == CAN_ID_DAS_STATUS_HW3) {
+        state_enter();
+        fsd_handle_das_status_hw3(&g_state, &frame);
+        state_exit();
+        return;
+    }
+    if (hw_uses_hw4_das_status(das_state.hw_version) && frame.id == CAN_ID_DAS_STATUS_HW4) {
+        state_enter();
+        fsd_handle_das_status_hw4(&g_state, &frame);
+        state_exit();
+        return;
+    }
 
     // ── Beyond here only run when TX is allowed ───────────────────────────────
     state_enter();
@@ -342,18 +371,25 @@ static void process_frame(const CanFrame &frame) {
     }
 
     // Fallback HW detection when 0x398 is unavailable on the tapped bus.
-    // Delay 0x3FD→HW3 fallback to avoid misclassifying HW4 (which also has
-    // 0x3FD) before 0x399 arrives. 0x3EE and 0x399 are unambiguous.
+    // Prefer explicit HW4 DAS_status (0x39B) when present. If the tap only sees
+    // HW3-style DAS_status on 0x399, classify as HW3 after repeated plausible
+    // samples so 0x399 can be parsed for AP/NAG gating.
     static uint32_t hw_fallback_3fd_count = 0;
+    static uint32_t hw_fallback_399_count = 0;
     if (state_snapshot().hw_version == TeslaHW_Unknown) {
         if (frame.id == CAN_ID_AP_LEGACY) {
             apply_detected_hw(TeslaHW_Legacy, "fallback:0x3EE");
-        } else if (frame.id == CAN_ID_ISA_SPEED) {
-            apply_detected_hw(TeslaHW_HW4, "fallback:0x399");
+        } else if (frame.id == CAN_ID_DAS_STATUS_HW4 && frame.dlc == 8) {
+            apply_detected_hw(TeslaHW_HW4, "fallback:0x39B");
             hw_fallback_3fd_count = 0;
+            hw_fallback_399_count = 0;
+        } else if (frame_looks_like_hw3_das_status(frame)) {
+            hw_fallback_399_count++;
+            if (hw_fallback_399_count >= 2u)
+                apply_detected_hw(TeslaHW_HW3, "fallback:0x399(DAS status)");
         } else if (frame.id == CAN_ID_AP_CONTROL) {
             hw_fallback_3fd_count++;
-            if (hw_fallback_3fd_count >= 50)
+            if (hw_fallback_3fd_count >= 10u)
                 apply_detected_hw(TeslaHW_HW3, "fallback:0x3FD(confirmed)");
         }
     }
@@ -637,9 +673,10 @@ void loop() {
             (s.hw_version == TeslaHW_HW3)    ? "HW3"    :
             (s.hw_version == TeslaHW_Legacy)  ? "Legacy" : "?";
         Serial.printf(
-            "[STA] HW:%-6s FSD:%-4s NAG:%-10s OTA:%-3s "
+            "[STA] HW:%-6s AP:%-4s FSD_UI:%-4s NAG:%-10s OTA:%-3s "
             "Profile:%d  RX:%lu TX:%lu Mod:%lu Err:%lu\n",
             hw_str,
+            s.ap_active       ? "ON"         : "wait",
             s.fsd_enabled     ? "ON"         : "wait",
             s.nag_suppressed  ? "suppressed"  : "active",
             s.tesla_ota_in_progress ? "YES"  : "no",
