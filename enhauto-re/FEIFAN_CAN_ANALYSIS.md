@@ -1,4 +1,4 @@
-# 非凡指揮官 CAN Signal Analysis
+# Feifan Commander CAN Signal Analysis
 
 How the Feifan Commander (TSL 6th gen module, ~69K units sold in China)
 likely implements its key features using CAN bus injection via OBD-II.
@@ -177,5 +177,5 @@ Reads from `DAS_status (0x39B)`:
 
 - opendbc/dbc/tesla_model3_party.dbc — Party CAN signal definitions
 - opendbc/dbc/tesla_model3_vehicle.dbc — Vehicle CAN signal definitions
-- Non-public: 非凡指揮官 product feature list (from Bilibili/Taobao)
+- Non-public: Feifan Commander product feature list (from Bilibili/Taobao)
 - Inference: matching features to available CAN signals by elimination

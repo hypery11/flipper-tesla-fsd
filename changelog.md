@@ -125,7 +125,7 @@
   - `VCRIGHT_rearDefrostState (0x343)`: rear window defrost.
 - **Extras scene expanded** to 10 toggles: Hazard, Rear Window Heat, Auto Wipers Off, Fold Mirrors, Rear Fog, Steering [ChassisCAN], High Beam Strobe, Turn Left, Turn Right.
 - **New research docs:**
-  - `enhauto-re/FEIFAN_CAN_ANALYSIS.md` — technical analysis of the 非凡指揮官 (Feifan Commander, 69K+ sales in China) CAN injection techniques: continuous AP, stalk simulation, strobe, checksum formulas.
+  - `enhauto-re/FEIFAN_CAN_ANALYSIS.md` — technical analysis of the Feifan Commander (69K+ sales in China) CAN injection techniques: continuous AP, stalk simulation, strobe, checksum formulas.
   - `enhauto-re/COMMANDER_VS_TESLAMOD.md` — three-way feature comparison between enhauto S3XY Commander, Feifan Commander, and Tesla Mod.
 
 ## 2.5 — Tesla Mod
