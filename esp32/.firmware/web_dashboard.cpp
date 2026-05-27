@@ -319,8 +319,8 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
   <div class="card-head"><div class="icon ic-d">C</div><h2>CAN Bus</h2></div>
   <div class="sg">
     <div class="sb"><div class="sv" id="rxCnt">0</div><div class="sl">RX Frames</div></div>
-    <div class="sb"><div class="sv" id="txCnt">0</div><div class="sl">TX Frames</div></div>
-    <div class="sb"><div class="sv" id="crcErr">0</div><div class="sl">TX Errors</div></div>
+    <div class="sb"><div class="sv" id="txCnt">0</div><div class="sl">TX Modified</div></div>
+    <div class="sb"><div class="sv" id="crcErr">0</div><div class="sl">CAN Errors</div></div>
     <div class="sb"><div class="sv" id="fps">0.0</div><div class="sl">Frames/s</div></div>
   </div>
 </div>

@@ -52,7 +52,7 @@ All CAN protocol handling from hypery11's Flipper Zero implementation (`fsd_hand
 - **FSD Status Panel** — FSD active/waiting, Listen-Only/Active mode, HW version, NAG Killer state
 - **Battery SOC Ring** — animated circular progress bar with color coding (green >60%, yellow >30%, red ≤30%)
 - **BMS Live Data UI hooks** — fields exist in UI/API, but BMS section is currently not working reliably on tested vehicle setup
-- **CAN Bus Stats** — RX frame count, TX modified count, CRC errors, frames/second
+- **CAN Bus Stats** — RX frame count, TX modified count, CAN driver errors, frames/second
 - **Web Controls** — toggle buttons for:
   - Activate/Stop FSD (Listen-Only ↔ Active mode switch)
   - NAG Killer on/off
@@ -85,7 +85,7 @@ Dual CAN driver support (compile-time switch):
 | **OTA Protection** | `0x318` | Auto-stops TX when OTA update detected |
 | **HW Auto-Detect** | `0x398` | Reads GTW_carConfig for HW version |
 | **Listen-Only Mode** | — | Default on boot, passive monitoring only |
-| **Wiring Check** | — | rx_count + CRC error monitoring |
+| **Wiring Check** | — | rx_count + CAN error monitoring |
 | **WiFi Dashboard** | — | Real-time web UI at 192.168.4.1 |
 
 ---
@@ -265,7 +265,7 @@ pio device monitor -b 115200
 | 🔵 Blue | Listen-Only (passive monitoring) |
 | 🟢 Green | Active (FSD enabled, transmitting) |
 | 🟡 Yellow | OTA detected (TX suspended) |
-| 🔴 Red | Error (no CAN signal / CRC errors) |
+| 🔴 Red | Error (no CAN signal / CAN errors) |
 
 ### WiFi Dashboard
 
@@ -280,7 +280,7 @@ pio device monitor -b 115200
 
 - **OTA Protection** — automatically stops all CAN TX when a software update is detected on `0x318`
 - **Listen-Only default** — device will not modify any CAN frames until explicitly switched to Active mode
-- **Wiring diagnostics** — monitors rx_count and CRC error counter; red LED if no CAN traffic
+- **Wiring diagnostics** — monitors rx_count and CAN driver error counter; red LED if no CAN traffic
 - **DLC validation** — checks frame data length before parsing to prevent buffer overflows
 - **Unplug = reset** — remove the device and restart the car to clear any modified state
 - **WiFi isolated** — AP mode only, no internet connection, no data leaves the device

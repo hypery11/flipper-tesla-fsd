@@ -71,6 +71,14 @@ static void apply_detected_hw(TeslaHWVersion hw, const char *reason) {
     can_dump_log("HW  auto-detected: %s (%s)", hw_str, reason);
 }
 
+static bool send_modified_frame(const CanFrame &frame) {
+    if (!g_can || !g_can->send(frame)) return false;
+    state_enter();
+    g_state.frames_modified++;
+    state_exit();
+    return true;
+}
+
 // ── Button state machine ──────────────────────────────────────────────────────
 static uint32_t g_btn_down_ms     = 0;
 static uint32_t g_last_release_ms = 0;
@@ -312,7 +320,7 @@ static void process_frame(const CanFrame &frame) {
             uint8_t cnt_out = echo.data[6] & 0x0F;
             can_dump_log("NAG 0x370 hands_off lvl=%u cnt=%u->%u %s",
                          lvl, cnt_in, cnt_out, tx ? "TX echo" : "listen-only no-TX");
-            if (tx) g_can->send(echo);
+            if (tx) send_modified_frame(echo);
         }
         return;
     }
@@ -331,7 +339,7 @@ static void process_frame(const CanFrame &frame) {
         state_enter();
         bool modified = fsd_handle_legacy_autopilot(&g_state, &f);
         state_exit();
-        if (modified && tx) g_can->send(f);
+        if (modified && tx) send_modified_frame(f);
         return;
     }
 
@@ -365,7 +373,7 @@ static void process_frame(const CanFrame &frame) {
         s.suppress_speed_chime) {
         CanFrame f = frame;
         if (fsd_handle_isa_speed_chime(&f) && tx)
-            g_can->send(f);
+            send_modified_frame(f);
         return;
     }
 
@@ -383,7 +391,7 @@ static void process_frame(const CanFrame &frame) {
         state_enter();
         bool modified = fsd_handle_tlssc_restore(&g_state, &f);
         state_exit();
-        if (modified && tx) g_can->send(f);
+        if (modified && tx) send_modified_frame(f);
         return;
     }
 
@@ -393,7 +401,7 @@ static void process_frame(const CanFrame &frame) {
         state_enter();
         bool modified = fsd_handle_autopilot_frame(&g_state, &f);
         state_exit();
-        if (modified && tx) g_can->send(f);
+        if (modified && tx) send_modified_frame(f);
         return;
     }
 }

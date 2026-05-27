@@ -221,7 +221,6 @@ bool fsd_handle_autopilot_frame(FSDState *state, CanFrame *frame) {
         }
     }
 
-    if (modified) state->frames_modified++;
     return modified;
 }
 
@@ -262,7 +261,6 @@ bool fsd_handle_legacy_autopilot(FSDState *state, CanFrame *frame) {
         modified = true;
     }
 
-    if (modified) state->frames_modified++;
     return modified;
 }
 

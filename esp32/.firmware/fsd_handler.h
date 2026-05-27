@@ -34,7 +34,7 @@ struct FSDState {
     bool           fsd_enabled;     // true when car's UI has FSD selected (mux0)
     bool           nag_suppressed;  // true after first nag-killer echo sent
 
-    uint32_t       frames_modified; // count of autopilot frames (0x3FD/0x3EE) we patched
+    uint32_t       frames_modified; // count of modified/spoofed frames successfully sent
     uint32_t       tx_count;        // total frames successfully transmitted on the bus
                                     // (autopilot mods + nag echoes + ISA + TLSSC + precond)
 
