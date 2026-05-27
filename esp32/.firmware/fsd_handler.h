@@ -39,8 +39,10 @@ struct FSDState {
                                     // (autopilot mods + nag echoes + ISA + TLSSC + precond)
 
     // ── Feature flags (runtime-toggleable) ───────────────────────────────────
+    bool           fsd_unlock;              // modify autopilot FSD unlock frames
     bool           force_fsd;               // bypass UI selection check
     bool           suppress_speed_chime;    // ISA chime suppress (HW4, 0x399)
+    bool           ignore_ota;              // allow TX while Tesla OTA is detected
     bool           china_mode;              // bypass FSD UI selection check for China vehicles
     bool           emergency_vehicle_detect;// set bit59 in mux0 (HW4)
     bool           nag_killer;              // 0x370 counter+1 echo

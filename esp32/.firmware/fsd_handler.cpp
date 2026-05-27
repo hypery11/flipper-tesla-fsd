@@ -48,8 +48,10 @@ void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
     state->op_mode    = OpMode_ListenOnly;  // safe default — never TX on boot
 
     // Feature flags: nag killer and chime suppress default ON; others OFF
+    state->fsd_unlock          = true;
     state->nag_killer           = true;
     state->suppress_speed_chime = true;
+    state->ignore_ota           = false;
     state->emergency_vehicle_detect = false;
     state->force_fsd            = false;
     state->china_mode           = false;
@@ -81,7 +83,7 @@ void fsd_apply_hw_version(FSDState *state, TeslaHWVersion hw) {
 
 bool fsd_can_transmit(const FSDState *state) {
     if (state->op_mode == OpMode_ListenOnly) return false;
-    if (state->tesla_ota_in_progress)        return false;
+    if (state->tesla_ota_in_progress && !state->ignore_ota) return false;
     return true;
 }
 
@@ -166,6 +168,8 @@ bool fsd_handle_autopilot_frame(FSDState *state, CanFrame *frame) {
     // mux 0 is the authoritative "is FSD requested" mux
     if (mux == 0) state->fsd_enabled = fsd_ui;
 
+    if (!state->fsd_unlock) return false;
+
     if (state->hw_version == TeslaHW_HW3) {
         // ── HW3 ──────────────────────────────────────────────────────────────
         if (mux == 0 && state->fsd_enabled) {
@@ -248,6 +252,8 @@ bool fsd_handle_legacy_autopilot(FSDState *state, CanFrame *frame) {
     bool    modified = false;
 
     if (mux == 0) state->fsd_enabled = fsd_ui;
+
+    if (!state->fsd_unlock) return false;
 
     if (mux == 0 && state->fsd_enabled) {
         set_bit(frame, 46, true);

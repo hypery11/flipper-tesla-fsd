@@ -275,14 +275,20 @@ static void process_frame(const CanFrame &frame) {
         bool was_ota = g_state.tesla_ota_in_progress;
         fsd_handle_gtw_car_state(&g_state, &frame);
         bool is_ota = g_state.tesla_ota_in_progress;
+        bool ignore_ota = g_state.ignore_ota;
         uint8_t raw = g_state.ota_raw_state;
         state_exit();
         if (!was_ota && is_ota) {
-            Serial.printf("[OTA] Update in progress (raw=%u) - TX suspended\n", raw);
-            can_dump_log("OTA  started — TX suspended");
+            if (ignore_ota) {
+                Serial.printf("[OTA] Update in progress (raw=%u) - TX allowed by Ignore OTA\n", raw);
+                can_dump_log("OTA  started - TX allowed by Ignore OTA");
+            } else {
+                Serial.printf("[OTA] Update in progress (raw=%u) - TX suspended\n", raw);
+                can_dump_log("OTA  started - TX suspended");
+            }
         } else if (was_ota && !is_ota) {
             Serial.printf("[OTA] Update finished (raw=%u) - TX resumed\n", raw);
-            can_dump_log("OTA  finished — TX resumed");
+            can_dump_log("OTA  finished - TX resumed");
         }
         return;
     }
@@ -499,7 +505,9 @@ void setup() {
     // Explicit safe defaults — will be overridden after HW auto-detect
     g_state.op_mode               = OpMode_ListenOnly;
     g_state.nag_killer            = true;
+    g_state.fsd_unlock            = true;
     g_state.suppress_speed_chime  = true;
+    g_state.ignore_ota            = false;
     g_state.emergency_vehicle_detect = false;
     g_state.force_fsd             = false;
     g_state.china_mode            = false;
