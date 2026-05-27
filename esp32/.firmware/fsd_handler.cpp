@@ -50,6 +50,7 @@ void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
     // Feature flags: nag killer and chime suppress default ON; others OFF
     state->nag_killer           = true;
     state->suppress_speed_chime = true;
+    state->ignore_ota           = false;
     state->emergency_vehicle_detect = false;
     state->force_fsd            = false;
     state->china_mode           = false;
@@ -81,7 +82,7 @@ void fsd_apply_hw_version(FSDState *state, TeslaHWVersion hw) {
 
 bool fsd_can_transmit(const FSDState *state) {
     if (state->op_mode == OpMode_ListenOnly) return false;
-    if (state->tesla_ota_in_progress)        return false;
+    if (state->tesla_ota_in_progress && !state->ignore_ota) return false;
     return true;
 }
 

@@ -81,7 +81,7 @@
 - Vehicle speed, steering angle, motor torque, brake state
 - DAS status: autopilot state, hands-on nag level, lane change state, blind spot warning, FCW, vision speed limit
 - GTW autopilot tier readback (NONE/HIGHWAY/ENHANCED/SELF_DRIVING/BASIC)
-- OTA detection with debounce — auto-suspends TX during firmware updates
+- OTA detection with debounce — auto-suspends TX during firmware updates unless the explicit Ignore OTA override is enabled
 
 ### Settings (runtime toggles)
 
@@ -92,6 +92,7 @@
 | **Mode** | `Active` / `Listen-Only` / `Service`. Listen-Only is the **first-boot default** — MCP2515 is in hardware listen-only mode and physically cannot TX. |
 | **Nag Killer** | DAS-aware EPAS counter+1 echo with organic torque variation. |
 | **Force FSD** | Bypass the `isFSDSelectedInUI` check. Does not bypass Tesla's server-side entitlement — only affects local CAN frame flow. |
+| **Ignore OTA** | Allows CAN TX in Active mode even when `0x318` reports a Tesla OTA update in progress. Default is off. |
 | **TLSSC Restore** | 0x331 DAS config spoof to recover TLSSC on banned vehicles. Triggers MCU reboot. |
 | **AP-First (14.x)** | Delay 0x3FD injection until AP is engaged. Required for Tesla firmware 2026.14.x. |
 | **Ban Shield** | Rewrite `GTW_carConfig` (0x7FF) broadcasts back to a learned-healthy pattern. CAN-broadcast-layer mask only — does not undo NVRAM or backend-side ban flags. Defense-in-depth, no confirmed ban-prevention case ([#60](https://github.com/hypery11/flipper-tesla-fsd/issues/60)). |

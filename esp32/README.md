@@ -33,7 +33,7 @@ All CAN protocol handling from hypery11's Flipper Zero implementation (`fsd_hand
 - HW3/HW4/Legacy auto-detection via `0x398` GTW_carConfig
 - NAG Killer (EPAS `0x370` counter+1 echo with handsOnLevel spoofing)
 - Speed profile mapping from follow-distance stalk
-- OTA update detection and automatic TX suspension
+- OTA update detection with automatic TX suspension by default, plus an explicit Ignore OTA override
 - ISA speed warning chime suppression (HW4)
 - BMS data parsing logic (voltage, current, SOC, temperature) — currently not reliable in real use
 - Battery precondition trigger
@@ -55,6 +55,7 @@ All CAN protocol handling from hypery11's Flipper Zero implementation (`fsd_hand
 - **CAN Bus Stats** — RX frame count, TX modified count, CRC errors, frames/second
 - **Web Controls** — toggle buttons for:
   - Activate/Stop FSD (Listen-Only ↔ Active mode switch)
+  - Ignore OTA on/off (allows Active mode TX during a detected Tesla OTA)
   - NAG Killer on/off
   - BMS serial output on/off
   - Force FSD toggle
@@ -82,7 +83,7 @@ Dual CAN driver support (compile-time switch):
 | **ISA Chime Suppress** | `0x399` | Kills speed warning chime (HW4 only) |
 | **Battery Precondition** | `0x082` | Frame builder implemented; no user control exposed yet |
 | **BMS Dashboard** | `0x132`/`0x292`/`0x312` | Parsing/UI path implemented, but currently not working reliably |
-| **OTA Protection** | `0x318` | Auto-stops TX when OTA update detected |
+| **OTA Protection** | `0x318` | Auto-stops TX when OTA update detected unless Ignore OTA is enabled |
 | **HW Auto-Detect** | `0x398` | Reads GTW_carConfig for HW version |
 | **Listen-Only Mode** | — | Default on boot, passive monitoring only |
 | **Wiring Check** | — | rx_count + CRC error monitoring |
@@ -264,7 +265,7 @@ pio device monitor -b 115200
 |-------|-------|
 | 🔵 Blue | Listen-Only (passive monitoring) |
 | 🟢 Green | Active (FSD enabled, transmitting) |
-| 🟡 Yellow | OTA detected (TX suspended) |
+| 🟡 Yellow | OTA detected |
 | 🔴 Red | Error (no CAN signal / CRC errors) |
 
 ### WiFi Dashboard
@@ -278,7 +279,7 @@ pio device monitor -b 115200
 
 ## Safety
 
-- **OTA Protection** — automatically stops all CAN TX when a software update is detected on `0x318`
+- **OTA Protection** — automatically stops all CAN TX when a software update is detected on `0x318`; Ignore OTA can override this in Active mode
 - **Listen-Only default** — device will not modify any CAN frames until explicitly switched to Active mode
 - **Wiring diagnostics** — monitors rx_count and CRC error counter; red LED if no CAN traffic
 - **DLC validation** — checks frame data length before parsing to prevent buffer overflows

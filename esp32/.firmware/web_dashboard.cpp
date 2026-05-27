@@ -330,6 +330,10 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
   <div class="card-head"><div class="icon ic-c">C</div><h2>Controls</h2></div>
   <button id="btnMode" class="btn-main btn-act" onclick="toggleMode()">ACTIVATE FSD</button>
   <div class="row">
+    <span class="lbl">Ignore OTA</span>
+    <label class="sw"><input type="checkbox" id="swIgnoreOta" onchange="cmd('ignore_ota',this.checked)"><span class="sl2"></span></label>
+  </div>
+  <div class="row">
     <span class="lbl">NAG Killer</span>
     <label class="sw"><input type="checkbox" id="swNag" onchange="cmd('nag',this.checked)"><span class="sl2"></span></label>
   </div>
@@ -520,7 +524,10 @@ function upd(d){
 
   // OTA banner
   var otaB=document.getElementById('otaBanner');
-  if(otaB) otaB.style.display=d.ota?'block':'none';
+  if(otaB){
+    otaB.style.display=d.ota?'block':'none';
+    if(d.ota) otaB.innerHTML=d.ignore_ota?'&#9888;&#xFE0F; OTA UPDATE IN PROGRESS &mdash; TX ALLOWED BY IGNORE OTA':'&#9888;&#xFE0F; OTA UPDATE IN PROGRESS &mdash; CAN TX SUSPENDED';
+  }
 
   // Mode button
   var act=d.op_mode===1;
@@ -531,6 +538,7 @@ function upd(d){
   }
 
   // Switches sync
+  if(document.getElementById('swIgnoreOta')) document.getElementById('swIgnoreOta').checked=d.ignore_ota;
   if(document.getElementById('swNag')) document.getElementById('swNag').checked=d.nag_killer;
   if(document.getElementById('swBms')) document.getElementById('swBms').checked=d.bms_output;
   if(document.getElementById('swFsd')) document.getElementById('swFsd').checked=d.force_fsd;
@@ -823,6 +831,7 @@ static String build_json() {
     j += "\"op_mode\":";       j += (int)state.op_mode;                j += ',';
     j += "\"hw_version\":";    j += (int)state.hw_version;             j += ',';
     j += "\"ota\":";           j += state.tesla_ota_in_progress        ? "true" : "false"; j += ',';
+    j += "\"ignore_ota\":";    j += state.ignore_ota                   ? "true" : "false"; j += ',';
     j += "\"nag_killer\":";    j += state.nag_killer                   ? "true" : "false"; j += ',';
     j += "\"bms_output\":";    j += state.bms_output                   ? "true" : "false"; j += ',';
     j += "\"force_fsd\":";     j += state.force_fsd                    ? "true" : "false"; j += ',';
@@ -894,6 +903,18 @@ static void ws_event(uint8_t num, WStype_t type,
         if (g_can) g_can->setListenOnly(!active);
         Serial.println(active ? "[Web] → Active mode" : "[Web] → Listen-Only mode");
         prefs_save(&saved);
+    } else if (strstr(buf, "\"ignore_ota\"")) {
+        if (vptr) {
+            while (*vptr == ' ' || *vptr == ':') vptr++;
+            bool enabled = (strncmp(vptr, "true", 4) == 0);
+            FSDState saved;
+            state_enter();
+            g_state->ignore_ota = enabled;
+            saved = *g_state;
+            state_exit();
+            Serial.printf("[Web] Ignore OTA: %s\n", enabled ? "ON" : "OFF");
+            prefs_save(&saved);
+        }
     } else if (strstr(buf, "\"nag\"")) {
         if (vptr) {
             while (*vptr == ' ' || *vptr == ':') vptr++;
