@@ -1,6 +1,17 @@
 #pragma once
 
+#include <stdint.h>
 #include "fsd_handler.h"  // for CanFrame
+
+enum CanBusId : uint8_t {
+    CAN_BUS_PRIMARY = 0,    // can0
+    CAN_BUS_SECONDARY = 1,  // can1
+    CAN_BUS_COUNT = 2,
+};
+
+static inline const char *can_bus_name(CanBusId bus) {
+    return bus == CAN_BUS_SECONDARY ? "can1" : "can0";
+}
 
 // ── Abstract CAN driver ───────────────────────────────────────────────────────
 // Implemented by TwaiDriver (CAN_DRIVER_TWAI) and Mcp2515Driver (CAN_DRIVER_MCP2515).
@@ -41,3 +52,7 @@ public:
 /** Factory function — returns the driver selected at compile time.
  *  Caller owns the returned pointer. */
 CanDriver *can_driver_create();
+
+/** Factory function for boards with two active CAN controllers.
+ *  Caller owns the returned pointer. */
+CanDriver *can_driver_create(CanBusId bus);

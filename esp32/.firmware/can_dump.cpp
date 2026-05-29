@@ -159,7 +159,7 @@ void can_dump_stop() {
                   (unsigned long)elapsed_s, (unsigned long)g_entries);
 }
 
-void can_dump_record(const CanFrame &frame) {
+void can_dump_record(CanBusId bus, const CanFrame &frame) {
     if (!g_active || !g_file) return;
 
     uint32_t elapsed_ms = millis() - g_start_ms;
@@ -168,8 +168,9 @@ void can_dump_record(const CanFrame &frame) {
 
     // candump ASCII log: (sec.usec) can0 ID#DATA\n
     char line[48];
-    int pos = snprintf(line, sizeof(line), "(%lu.%06lu) can0 %03X#",
-                       (unsigned long)sec, (unsigned long)usec, frame.id);
+    int pos = snprintf(line, sizeof(line), "(%lu.%06lu) %s %03X#",
+                       (unsigned long)sec, (unsigned long)usec,
+                       can_bus_name(bus), frame.id);
     for (int i = 0; i < frame.dlc && i < 8; i++) {
         pos += snprintf(line + pos, sizeof(line) - pos, "%02X", frame.data[i]);
     }
@@ -305,7 +306,7 @@ String sd_format_card() {
 void   can_dump_init()                    {}
 bool   can_dump_start()                   { return false; }
 void   can_dump_stop()                    {}
-void   can_dump_record(const CanFrame &)  {}
+void   can_dump_record(CanBusId, const CanFrame &) {}
 void   can_dump_tick(uint32_t)            {}
 bool   can_dump_active()                  { return false; }
 void   can_dump_log(const char *, ...)    {}

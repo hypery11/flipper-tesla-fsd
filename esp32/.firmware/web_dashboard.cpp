@@ -23,7 +23,8 @@
 
 // ── Module state ──────────────────────────────────────────────────────────────
 static FSDState  *g_state = nullptr;   // shared with main
-static CanDriver *g_can   = nullptr;   // for setListenOnly()
+static CanDriver **g_can_buses = nullptr; // for setListenOnly()
+static uint8_t g_can_count = 0;
 static portMUX_TYPE *g_state_mux = nullptr;
 
 static WebServer        g_http(80);
@@ -1163,7 +1164,9 @@ static void ws_event(uint8_t num, WStype_t type,
         }
         saved = *g_state;
         state_exit();
-        if (g_can) g_can->setListenOnly(!active);
+        for (uint8_t i = 0; i < g_can_count; i++) {
+            if (g_can_buses[i]) g_can_buses[i]->setListenOnly(!active);
+        }
         http_can_stream_set_enabled(!active);
         Serial.println(active ? "[Web] → Active mode" : "[Web] → Listen-Only mode");
         prefs_save(&saved);
@@ -1555,9 +1558,13 @@ static void handle_ota_done() {
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
-void web_dashboard_init(FSDState *state, CanDriver *can, portMUX_TYPE *state_mux) {
+void web_dashboard_init(FSDState *state,
+                        CanDriver **can_buses,
+                        uint8_t can_count,
+                        portMUX_TYPE *state_mux) {
     g_state       = state;
-    g_can         = can;
+    g_can_buses   = can_buses;
+    g_can_count   = can_count;
     g_state_mux   = state_mux;
     g_start_ms    = millis();
     g_last_fps_ms = millis();
