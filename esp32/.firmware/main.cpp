@@ -300,19 +300,19 @@ static void process_frame(const CanFrame &frame) {
     bool tx = fsd_can_transmit(&g_state);
     state_exit();
 
-    // NAG killer — build echo and send before the real frame propagates (0x370)
+    // NAG killer — build echo only when TX is currently allowed.
     if (frame.id == CAN_ID_EPAS_STATUS) {
         CanFrame echo;
         state_enter();
-        bool fired = fsd_handle_nag_killer(&g_state, &frame, &echo);
+        bool fired = tx ? fsd_handle_nag_killer(&g_state, &frame, &echo) : false;
         state_exit();
         if (fired) {
             uint8_t lvl     = (frame.data[4] >> 6) & 0x03;
             uint8_t cnt_in  = frame.data[6] & 0x0F;
             uint8_t cnt_out = echo.data[6] & 0x0F;
-            can_dump_log("NAG 0x370 hands_off lvl=%u cnt=%u->%u %s",
-                         lvl, cnt_in, cnt_out, tx ? "TX echo" : "listen-only no-TX");
-            if (tx) g_can->send(echo);
+            can_dump_log("NAG 0x370 hands_off lvl=%u cnt=%u->%u TX echo",
+                         lvl, cnt_in, cnt_out);
+            g_can->send(echo);
         }
         return;
     }
