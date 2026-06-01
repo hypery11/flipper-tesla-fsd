@@ -184,6 +184,8 @@ typedef struct FSDState {
     char wifi_ssid[33];          // max 32 chars + null
     char wifi_pass[65];          // max 64 chars + null
     bool wifi_hidden;
+    char wifi_sta_ssid[33];      // optional infrastructure WiFi SSID
+    char wifi_sta_pass[65];      // optional infrastructure WiFi password
 
     // 2026.14.x firmware warning (persisted in NVS on ESP32)
     bool firmware_14x_warning;
