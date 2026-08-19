@@ -32,8 +32,8 @@
 </p>
 
 <p align="center">
-  <a href="https://star-history.com/#hypery11/flipper-tesla-fsd&Date">
-    <img src="https://api.star-history.com/svg?repos=hypery11/flipper-tesla-fsd&type=Date" alt="Star history" width="600">
+  <a href="https://star-history.dera.page/#hypery11/flipper-tesla-fsd&Date">
+    <img src="https://star-history.dera.page/svg?repos=hypery11/flipper-tesla-fsd&type=Date" alt="Star history" width="600">
   </a>
 </p>
 
