@@ -84,6 +84,7 @@
 - Pessimistic default: most users on 14.x firmware don't know they're affected until autosteer disengages mid-drive. The warning reaches them before they enable any TX feature.
 - Opt-out via the **On 14.x?** Settings toggle (Flipper) or the **Dismiss** button on the banner (ESP32, persisted in NVS). Disable if you are sure you're on pre-14.x firmware.
 - Regional caveat: enforcement intensity varies by market. Some regions (markets without Tesla direct presence) appear to enforce less aggressively. See [#122](https://github.com/hypery11/flipper-tesla-fsd/issues/122) for the running 14.x / 2026.20 tracker.
+- **"Does this unlock FSD on 2026.14.x / .20 / .26.x?"** Short answer: no — the activation preflight and an off-CAN region lock block it, while nag killer / TLSSC / Summon EU / captures still work. Full explanation in the pinned [FSD-on-14.x FAQ (#168)](https://github.com/hypery11/flipper-tesla-fsd/discussions/168), with the frame-level proof in [#163](https://github.com/hypery11/flipper-tesla-fsd/discussions/163).
 
 ### Diagnostics (read-only, no FSD required)
 - Live BMS dashboard: pack voltage, current, SoC, temperature range, **energy consumption (Wh/km)**

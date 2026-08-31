@@ -87,6 +87,7 @@
 - 悲观默认：大多数 14.x 固件用户要到自动转向在行驶中脱离时才知道自己受影响。这个警告会在他们启用任何 TX 功能之前先提醒到。
 - 可通过 **On 14.x?** 设置开关（Flipper）或横幅上的 **Dismiss** 按钮（ESP32，存在 NVS）退出。若你确定是 pre-14.x 固件就可关闭。
 - 地区注意：执法强度因市场而异。部分地区（没有 Tesla 直营的市场）似乎执法较不积极。14.x / 2026.20 的实时追踪见 [#122](https://github.com/hypery11/flipper-tesla-fsd/issues/122)。
+- **「2026.14.x / .20 / .26.x 还能解锁 FSD 吗？」** 简短答案：不行——激活 preflight 加上链外区域锁挡住了,但 nag killer / TLSSC / Summon EU / 抓包仍可用。完整说明见置顶的 [FSD-on-14.x FAQ (#168)](https://github.com/hypery11/flipper-tesla-fsd/discussions/168),frame 级证明见 [#163](https://github.com/hypery11/flipper-tesla-fsd/discussions/163)。
 
 ### 诊断（只读，不需要 FSD）
 - BMS 实时仪表板：电池组电压、电流、SoC、温度范围、**能耗（Wh/km）**
