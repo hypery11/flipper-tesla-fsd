@@ -141,6 +141,17 @@ void fsd_handle_epas_status(FSDState *state, const CanFrame *frame);
 /** Parse ESP_status (0x145) brake pedal state. */
 void fsd_handle_esp_status(FSDState *state, const CanFrame *frame);
 
+/** Parse DI_torque (0x108) drive motor torque. */
+void fsd_handle_di_torque(FSDState *state, const CanFrame *frame);
+
+#define DI_PEDAL_PRESSED_TORQUE_NM 5.0f
+
+/** True once DI_torque is available and indicates accelerator demand. */
+bool fsd_accelerator_pressed(const FSDState *state);
+
+/** Effective (possibly temporary) chime suppression state. */
+bool fsd_speed_chime_suppression_active(const FSDState *state);
+
 /** Parse DI_speed (0x257) vehicle and UI speed. */
 void fsd_handle_di_speed(FSDState *state, const CanFrame *frame);
 

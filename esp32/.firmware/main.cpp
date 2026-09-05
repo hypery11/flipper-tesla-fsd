@@ -1061,6 +1061,45 @@ static void update_led() {
 }
 
 // ── CAN frame dispatcher ──────────────────────────────────────────────────────
+enum SummonAutoUpdate : uint8_t {
+    SummonAutoUpdate_None = 0,
+    SummonAutoUpdate_Disabled,
+    SummonAutoUpdate_Restored,
+};
+
+static SummonAutoUpdate update_summon_auto_control_locked(uint32_t now_ms) {
+    if (!g_state.summon_unlock || !g_state.suppress_speed_chime ||
+        g_state.summon_auto_control != SummonAutoControl_AcceleratorTemporary ||
+        !g_state.vehicle_gear_seen) {
+        return SummonAutoUpdate_None;
+    }
+
+    if (g_state.vehicle_gear == SIG_DI_GEAR_PARK) {
+        if (!g_state.summon_temp_disabled) return SummonAutoUpdate_None;
+        g_state.summon_temp_disabled = false;
+        g_state.summon_temp_recovery_armed = false;
+        g_state.summon_temp_disabled_ms = 0;
+        return SummonAutoUpdate_Restored;
+    }
+
+    if (fsd_accelerator_pressed(&g_state) && !g_state.summon_temp_disabled) {
+        g_state.summon_temp_disabled = true;
+        g_state.summon_temp_recovery_armed = false;
+        g_state.summon_temp_disabled_ms = now_ms;
+        return SummonAutoUpdate_Disabled;
+    }
+
+    return SummonAutoUpdate_None;
+}
+
+static void log_summon_auto_update(SummonAutoUpdate update) {
+    if (update == SummonAutoUpdate_Disabled) {
+        Serial.println("[SAFETY] Accelerator pressed outside P: Summon disabled, speed chime suppression enabled");
+    } else if (update == SummonAutoUpdate_Restored) {
+        Serial.println("[SAFETY] Park selected: Summon restored, speed chime suppression disabled");
+    }
+}
+
 static void process_frame(CanBusId bus, const CanFrame &frame) {
     uint32_t now = millis();
     state_enter();
@@ -1257,13 +1296,21 @@ static void process_frame(CanBusId bus, const CanFrame &frame) {
         return;
     }
     if (frame.id == CAN_ID_DI_SYSTEM) {
+        SummonAutoUpdate summon_update;
         state_enter();
         fsd_handle_di_system(&g_state, &frame);
-        if (g_state.summon_temp_disabled && g_state.vehicle_gear_seen &&
-            g_state.vehicle_gear != SIG_DI_GEAR_PARK) {
-            g_state.summon_temp_recovery_armed = true;
-        }
+        summon_update = update_summon_auto_control_locked(now);
         state_exit();
+        log_summon_auto_update(summon_update);
+        return;
+    }
+    if (frame.id == CAN_ID_DI_TORQUE) {
+        SummonAutoUpdate summon_update;
+        state_enter();
+        fsd_handle_di_torque(&g_state, &frame);
+        summon_update = update_summon_auto_control_locked(now);
+        state_exit();
+        log_summon_auto_update(summon_update);
         return;
     }
     if (frame.id == CAN_ID_DI_SPEED) {
@@ -1280,37 +1327,10 @@ static void process_frame(CanBusId bus, const CanFrame &frame) {
     }
     if (frame.id == CAN_ID_ESP_STATUS) {
         uint32_t now_ms = millis();
-        bool summon_temp_disabled = false;
-        bool summon_temp_restored = false;
         state_enter();
-        bool brake_was_seen = g_state.brake_status_seen;
-        bool brake_was_applied = g_state.driver_brake_applied;
-        bool summon_was_temp_disabled = g_state.summon_temp_disabled;
         fsd_handle_esp_status(&g_state, &frame);
         if (g_state.driver_brake_applied) g_cont_ap_last_brake_ms = now_ms;
-        if (g_state.summon_auto_control == SummonAutoControl_BrakeTemporary &&
-            brake_was_seen &&
-            !brake_was_applied && g_state.driver_brake_applied) {
-            if (g_state.summon_unlock && summon_was_temp_disabled &&
-                g_state.vehicle_gear_seen &&
-                g_state.vehicle_gear == SIG_DI_GEAR_PARK &&
-                g_state.summon_temp_recovery_armed) {
-                g_state.summon_temp_disabled = false;
-                g_state.summon_temp_recovery_armed = false;
-                g_state.summon_temp_disabled_ms = 0;
-                summon_temp_restored = true;
-            } else if (g_state.summon_unlock && !summon_was_temp_disabled) {
-                g_state.summon_temp_disabled = true;
-                g_state.summon_temp_recovery_armed = false;
-                g_state.summon_temp_disabled_ms = now_ms;
-                summon_temp_disabled = true;
-            }
-        }
         state_exit();
-        if (summon_temp_disabled)
-            Serial.println("[SAFETY] Summon EU Unlock temporarily disabled on brake apply");
-        else if (summon_temp_restored)
-            Serial.println("[SAFETY] Summon EU Unlock restored by parked brake apply");
         return;
     }
     // Steering angle (0x129) — read-only, feeds the Soft Engage gate (#108).
@@ -1415,7 +1435,7 @@ static void process_frame(CanBusId bus, const CanFrame &frame) {
     FSDState s = state_snapshot();
     if (frame.id == CAN_ID_ISA_SPEED &&
         s.hw_version == TeslaHW_HW4 &&
-        s.suppress_speed_chime) {
+        fsd_speed_chime_suppression_active(&s)) {
         CanFrame f = frame;
         if (fsd_handle_isa_speed_chime(&f) && tx)
             send_on_bus(bus, f);

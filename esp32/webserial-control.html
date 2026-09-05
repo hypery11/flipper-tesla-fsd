@@ -293,7 +293,6 @@
       <div class="status-row"><span class="status-label">Mode</span><span class="pill off" id="stMode"><span class="pill-dot"></span>--</span></div>
       <div class="status-row"><span class="status-label">Hardware</span><span class="pill off" id="stHardware"><span class="pill-dot"></span>--</span></div>
       <div class="status-row"><span class="status-label">Gear Lever</span><span class="pill off" id="stGear"><span class="pill-dot"></span>--</span></div>
-      <div class="status-row"><span class="status-label">Pedal</span><span class="pill off" id="stPedal"><span class="pill-dot"></span>--</span></div>
       <div class="status-row"><span class="status-label">NAG Killer</span><span class="pill off" id="stNag"><span class="pill-dot"></span>--</span></div>
       <div class="status-row"><span class="status-label">Summon</span><span class="pill off" id="stSummon" title="Click to toggle"><span class="pill-dot"></span>--</span></div>
       <div class="status-row"><span class="status-label">Summon Auto Control</span><span class="pill off" id="stSummonControl"><span class="pill-dot"></span>--</span></div>
@@ -305,6 +304,7 @@
       <div class="status-row"><span class="status-label">Vehicle Speed</span><span class="pill off" id="stSpeed"><span class="pill-dot"></span>--</span></div>
       <div class="status-row"><span class="status-label">UI Speed</span><span class="pill off" id="stUiSpeed"><span class="pill-dot"></span>--</span></div>
       <div class="status-row"><span class="status-label">Vehicle Gear</span><span class="pill off" id="stVehicleGear"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">Accelerator</span><span class="pill off" id="stPedal"><span class="pill-dot"></span>--</span></div>
       <div class="status-row"><span class="status-label">Brake</span><span class="pill off" id="stBrake"><span class="pill-dot"></span>--</span></div>
       <div class="status-row"><span class="status-label">Turn Signal</span><span class="pill off" id="stTurn"><span class="pill-dot"></span>--</span></div>
     </div>
@@ -447,7 +447,7 @@
       stSummon.dataset.tempDisabled = s.summon_temp_disabled ? "true" : "false";
       stSummon.dataset.summonEnabled = s.summon_unlock ? "true" : "false";
       stSummon.classList.toggle("actionable", !!s.summon_unlock);
-      setValue(stSummonControl, s.summon_auto_control === 0 ? "Brake" : "unknown", "");
+      setValue(stSummonControl, s.summon_auto_control === 0 ? "Accelerator + P gear" : "unknown", "");
       const bmsFrames = (s.bms_hv_seen ? 1 : 0) + (s.bms_soc_seen ? 1 : 0) + (s.bms_thermal_seen ? 1 : 0);
       setValue(stBms, s.bms_output ? "Enabled" : "Disabled", s.bms_output ? "ok" : "off");
       setValue(stBmsFrames, bmsFrames + " seen", bmsFrames ? "ok" : "off");

@@ -47,7 +47,7 @@ void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
     state->ignore_ota           = false;
     state->emergency_vehicle_detect = false;
     state->summon_unlock        = false;    // opt-in Summon EU Unlock, default OFF
-    state->summon_auto_control  = SummonAutoControl_BrakeTemporary;
+    state->summon_auto_control  = SummonAutoControl_AcceleratorTemporary;
     state->summon_temp_disabled = false;
     state->summon_temp_recovery_armed = false;
     state->summon_temp_disabled_ms = 0;
@@ -799,6 +799,27 @@ void fsd_handle_esp_status(FSDState *state, const CanFrame *frame) {
         SIG_ESP_DRIVER_BRAKE_MASK;
     state->driver_brake_applied = brake >= SIG_ESP_DRIVER_BRAKE_APPLYING;
     state->brake_status_seen = true;
+}
+
+void fsd_handle_di_torque(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc < 2) return;
+    uint16_t raw = ((uint16_t)(frame->data[1] & 0x1Fu) << 8) | frame->data[0];
+    state->di_torque_nm = (float)raw * 0.25f - 750.0f;
+    state->di_torque_seen = true;
+}
+
+bool fsd_accelerator_pressed(const FSDState *state) {
+    return state->di_torque_seen &&
+           state->di_torque_nm > DI_PEDAL_PRESSED_TORQUE_NM;
+}
+
+bool fsd_speed_chime_suppression_active(const FSDState *state) {
+    if (state->summon_unlock &&
+        state->summon_auto_control == SummonAutoControl_AcceleratorTemporary &&
+        state->suppress_speed_chime) {
+        return state->summon_temp_disabled;
+    }
+    return state->suppress_speed_chime;
 }
 
 void fsd_handle_di_speed(FSDState *state, const CanFrame *frame) {

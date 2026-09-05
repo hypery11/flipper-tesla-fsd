@@ -398,6 +398,10 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <span class="pill off" id="vehicleGear"><span class="pd"></span>--</span>
   </div>
   <div class="row">
+    <span class="lbl">Accelerator</span>
+    <span class="pill off" id="acceleratorStatus"><span class="pd"></span>--</span>
+  </div>
+  <div class="row">
     <span class="lbl">Brake</span>
     <span class="pill off" id="brakeStatus"><span class="pd"></span>--</span>
   </div>
@@ -1018,6 +1022,9 @@ function upd(d){
   var gearNames={1:'P',2:'R',3:'N',4:'D'};
   var gearSeen=d.vehicle_gear_seen===true;
   pill('vehicleGear', gearSeen, gearSeen?(gearNames[d.vehicle_gear]||'Unknown'):'Waiting');
+  var pedalSeen=d.di_torque_seen===true;
+  pill('acceleratorStatus', pedalSeen && d.pedal_pressed,
+    pedalSeen?((d.pedal_pressed?'Pressed ':'Released ')+Number(d.di_torque_nm||0).toFixed(1)+' Nm'):'Waiting');
   var brakeSeen=d.brake_status_seen===true;
   pill('brakeStatus', brakeSeen, brakeSeen?(d.driver_brake_applied?'Pressed':'Released'):'Waiting');
   var turnSeen=d.turn_status_seen===true;
@@ -1645,7 +1652,8 @@ static String build_json() {
 
     String j;
     bool isa_speed_enabled = state.hw_version == TeslaHW_HW4;
-    bool pedal_pressed = state.di_torque_seen && state.di_torque_nm > 5.0f;
+    bool pedal_pressed = fsd_accelerator_pressed(&state);
+    bool chime_suppression_active = fsd_speed_chime_suppression_active(&state);
     char di_torque_s[16];
     char vehicle_speed_s[16];
     snprintf(di_torque_s, sizeof(di_torque_s), "%.1f", state.di_torque_nm);
@@ -1693,7 +1701,8 @@ static String build_json() {
     j += "\"bms_output\":";    j += state.bms_output                   ? "true" : "false"; j += ',';
     j += "\"force_fsd\":";     j += state.force_fsd                    ? "true" : "false"; j += ',';
     j += "\"china_mode\":";    j += state.china_mode                   ? "true" : "false"; j += ',';
-    j += "\"suppress_speed_chime\":"; j += state.suppress_speed_chime  ? "true" : "false"; j += ',';
+    j += "\"suppress_speed_chime\":"; j += chime_suppression_active    ? "true" : "false"; j += ',';
+    j += "\"suppress_speed_chime_configured\":"; j += state.suppress_speed_chime ? "true" : "false"; j += ',';
     j += "\"tlssc_restore\":"; j += state.tlssc_restore                ? "true" : "false"; j += ',';
     j += "\"summon_unlock\":"; j += state.summon_unlock                ? "true" : "false"; j += ',';
     j += "\"summon_auto_control\":"; j += (int)state.summon_auto_control; j += ',';
