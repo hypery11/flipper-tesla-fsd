@@ -144,7 +144,9 @@ void fsd_handle_esp_status(FSDState *state, const CanFrame *frame);
 /** Parse DI_torque (0x108) drive motor torque. */
 void fsd_handle_di_torque(FSDState *state, const CanFrame *frame);
 
-#define DI_PEDAL_PRESSED_TORQUE_NM 5.0f
+#define DI_PEDAL_PRESS_TORQUE_NM    8.0f
+#define DI_PEDAL_RELEASE_TORQUE_NM  3.0f
+#define DI_PEDAL_DEBOUNCE_FRAMES    3u
 
 /** True once DI_torque is available and indicates accelerator demand. */
 bool fsd_accelerator_pressed(const FSDState *state);

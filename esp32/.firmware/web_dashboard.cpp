@@ -385,6 +385,10 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <span class="lbl">Summon Status</span>
     <span class="pill off" id="summonStatus" title="Click to toggle" onclick="toggleSummonTemp()"><span class="pd"></span>--</span>
   </div>
+  <div class="row">
+    <span class="lbl">Suppress Chime</span>
+    <span class="pill off" id="chimeStatus"><span class="pd"></span>--</span>
+  </div>
 </div>
 
 <details class="card" open>
@@ -875,7 +879,7 @@ function updateControlsSummary(d){
   if(d.bms_output)items.push('BMS');
   if(d.force_fsd)items.push('Force FSD');
   if(d.china_mode)items.push('China');
-  if(d.isa_speed_enabled&&d.suppress_speed_chime)items.push('Chime');
+  if(d.isa_speed_enabled&&d.suppress_speed_chime_configured)items.push('Chime');
   if(d.tlssc_restore)items.push('TLSSC');
   if(d.assist_tlssc_bit38)items.push('TLSSC bit38');
   if(d.display_enabled)items.push('Display');
@@ -1017,6 +1021,10 @@ function upd(d){
     summonEl.style.cursor=summonEnabled?'pointer':'default';
     summonEl.title=summonEnabled?'Click to toggle':'';
   }
+  var chimeConfigured=d.suppress_speed_chime_configured!==undefined?
+    !!d.suppress_speed_chime_configured:!!d.suppress_speed_chime;
+  pill('chimeStatus', !!d.suppress_speed_chime,
+    chimeConfigured?(d.suppress_speed_chime?'Suppressed':'Not suppressed'):'Disabled');
   var speedFresh=d.speed_seen===true;
   pill('vehicleSpeed', speedFresh, speedFresh?(Number(d.vehicle_speed_kph||0).toFixed(1)+' km/h'):'Waiting');
   var gearNames={1:'P',2:'R',3:'N',4:'D'};
@@ -1024,9 +1032,10 @@ function upd(d){
   pill('vehicleGear', gearSeen, gearSeen?(gearNames[d.vehicle_gear]||'Unknown'):'Waiting');
   var pedalSeen=d.di_torque_seen===true;
   pill('acceleratorStatus', pedalSeen && d.pedal_pressed,
-    pedalSeen?((d.pedal_pressed?'Pressed ':'Released ')+Number(d.di_torque_nm||0).toFixed(1)+' Nm'):'Waiting');
+    pedalSeen?(d.pedal_pressed?'Pressed':'Released'):'Waiting');
   var brakeSeen=d.brake_status_seen===true;
-  pill('brakeStatus', brakeSeen, brakeSeen?(d.driver_brake_applied?'Pressed':'Released'):'Waiting');
+  pill('brakeStatus', brakeSeen && d.driver_brake_applied,
+    brakeSeen?(d.driver_brake_applied?'Pressed':'Released'):'Waiting');
   var turnSeen=d.turn_status_seen===true;
   var turnLabel=turnSeen ? ((d.left_turn_active?'L':'')+(d.right_turn_active?'R':'' )||'Off') : 'Waiting';
   pill('turnSignal', turnSeen && !!(d.left_turn_active||d.right_turn_active),
@@ -1073,7 +1082,7 @@ function upd(d){
   if(document.getElementById('swBms')) document.getElementById('swBms').checked=d.bms_output;
   if(document.getElementById('swFsd')) document.getElementById('swFsd').checked=d.force_fsd;
   if(document.getElementById('swChina')) document.getElementById('swChina').checked=d.china_mode;
-  if(document.getElementById('swChime')) document.getElementById('swChime').checked=d.suppress_speed_chime;
+  if(document.getElementById('swChime')) document.getElementById('swChime').checked=chimeConfigured;
   if(document.getElementById('rowChime')) document.getElementById('rowChime').style.display=d.isa_speed_enabled?'flex':'none';
   if(document.getElementById('swTlssc')) document.getElementById('swTlssc').checked=d.tlssc_restore;
   if(document.getElementById('swSummon')) document.getElementById('swSummon').checked=d.summon_unlock;

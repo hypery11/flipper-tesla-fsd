@@ -806,11 +806,29 @@ void fsd_handle_di_torque(FSDState *state, const CanFrame *frame) {
     uint16_t raw = ((uint16_t)(frame->data[1] & 0x1Fu) << 8) | frame->data[0];
     state->di_torque_nm = (float)raw * 0.25f - 750.0f;
     state->di_torque_seen = true;
+
+    if (state->di_torque_nm > DI_PEDAL_PRESS_TORQUE_NM) {
+        state->accelerator_release_count = 0;
+        if (!state->accelerator_pressed &&
+            ++state->accelerator_press_count >= DI_PEDAL_DEBOUNCE_FRAMES) {
+            state->accelerator_pressed = true;
+            state->accelerator_press_count = 0;
+        }
+    } else if (state->di_torque_nm < DI_PEDAL_RELEASE_TORQUE_NM) {
+        state->accelerator_press_count = 0;
+        if (state->accelerator_pressed &&
+            ++state->accelerator_release_count >= DI_PEDAL_DEBOUNCE_FRAMES) {
+            state->accelerator_pressed = false;
+            state->accelerator_release_count = 0;
+        }
+    } else {
+        state->accelerator_press_count = 0;
+        state->accelerator_release_count = 0;
+    }
 }
 
 bool fsd_accelerator_pressed(const FSDState *state) {
-    return state->di_torque_seen &&
-           state->di_torque_nm > DI_PEDAL_PRESSED_TORQUE_NM;
+    return state->di_torque_seen && state->accelerator_pressed;
 }
 
 bool fsd_speed_chime_suppression_active(const FSDState *state) {

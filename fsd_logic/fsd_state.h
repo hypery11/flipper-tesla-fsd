@@ -242,6 +242,9 @@ typedef struct FSDState {
     // --- DI_torque (0x108) — motor power ---
     float di_torque_nm;          // drive motor torque
     bool di_torque_seen;
+    bool accelerator_pressed;    // debounced accelerator demand inferred from torque
+    uint8_t accelerator_press_count;
+    uint8_t accelerator_release_count;
 
     // --- UI_warning (0x311) — dashboard indicators ---
     bool ui_left_blinker;
