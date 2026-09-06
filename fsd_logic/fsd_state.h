@@ -239,10 +239,12 @@ typedef struct FSDState {
     bool gear_lever_counter_seen; // true once 0x229 counter has been observed
     uint32_t gear_lever_last_ms; // last ms timestamp when 0x229 detent/counter was captured
 
-    // --- DI_torque (0x108) — motor power ---
-    float di_torque_nm;          // drive motor torque
+    // --- Accelerator / motor telemetry ---
+    float di_torque_nm;          // DI_torqueActual from 0x108
     bool di_torque_seen;
-    bool accelerator_pressed;    // debounced accelerator demand inferred from torque
+    float accelerator_pedal_percent; // DI_accelPedalPos from 0x118
+    bool accelerator_pedal_seen;
+    bool accelerator_pressed;    // debounced accelerator pedal state
     uint8_t accelerator_press_count;
     uint8_t accelerator_release_count;
 

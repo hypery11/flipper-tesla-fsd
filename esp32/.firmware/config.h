@@ -2,8 +2,8 @@
 
 // ── CAN IDs ───────────────────────────────────────────────────────────────────
 #define CAN_ID_STW_ACTN_RQ    0x045u  // 69   - STW_ACTN_RQ:  steering stalk (Legacy follow distance)
-#define CAN_ID_DI_TORQUE      0x108u  // 264  - DI_torque: drive motor torque / accelerator state
-#define CAN_ID_DI_SYSTEM      0x118u  // 280  - DI_systemStatus: accepted vehicle gear
+#define CAN_ID_DI_TORQUE      0x108u  // 264  - DI_torque: drive motor torque telemetry
+#define CAN_ID_DI_SYSTEM      0x118u  // 280  - DI_systemStatus: gear / accelerator pedal
 #define CAN_ID_TRIP_PLANNING  0x082u  // 130  - UI_tripPlanning: precondition trigger
 #define CAN_ID_ESP_STATUS     0x145u  // 325  - ESP_status: driver brake pedal state
 #define CAN_ID_STEER_ANGLE    0x129u  // 297  - SCCM_steeringAngleSensor (Soft Engage gate, #108)

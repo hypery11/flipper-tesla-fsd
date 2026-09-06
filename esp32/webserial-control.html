@@ -284,7 +284,7 @@
       <div class="status-row"><span class="status-label">NAG Killer</span><span class="pill off" id="stNag"><span class="pill-dot"></span>--</span></div>
       <div class="status-row"><span class="status-label">CAN Vehicle</span><span class="pill off" id="stCan"><span class="pill-dot"></span>--</span></div>
       <div class="status-row"><span class="status-label">Summon Status</span><span class="pill off" id="stSummon" title="Click to toggle"><span class="pill-dot"></span>--</span></div>
-      <div class="status-row"><span class="status-label">Suppress Chime</span><span class="pill off" id="stChime"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row" id="stChimeRow"><span class="status-label">Suppress Chime</span><span class="pill off" id="stChime"><span class="pill-dot"></span>--</span></div>
     </div>
 
     <div class="status-card">
@@ -348,6 +348,7 @@
     const stPedal = document.getElementById("stPedal");
     const stSummon = document.getElementById("stSummon");
     const stChime = document.getElementById("stChime");
+    const stChimeRow = document.getElementById("stChimeRow");
     const stTurn = document.getElementById("stTurn");
     const stBms = document.getElementById("stBms");
     const stBmsFrames = document.getElementById("stBmsFrames");
@@ -413,7 +414,8 @@
       const turnSeen = s.turn_status_seen === true;
       const turn = turnSeen ? ((s.left_turn_active ? "L" : "") + (s.right_turn_active ? "R" : "") || "Off") : "Waiting";
       setValue(stTurn, turn, turnSeen && (s.left_turn_active || s.right_turn_active) ? "ok" : "");
-      const pedal = s.di_torque_seen ? (s.pedal_pressed ? "Pressed" : "Released") : "Waiting";
+      const pedalSeen = s.accelerator_pedal_seen === true;
+      const pedal = pedalSeen ? (s.pedal_pressed ? "Pressed" : "Released") : "Waiting";
       setValue(stPedal, pedal, s.pedal_pressed ? "ok" : "");
       const summonStatus = s.summon_temp_disabled ? "Temp disabled"
         : (s.summon_unlock ? "Enabled" : "Disabled");
@@ -423,6 +425,7 @@
       stSummon.classList.toggle("actionable", !!s.summon_unlock);
       const chimeConfigured = s.suppress_speed_chime_configured !== undefined
         ? !!s.suppress_speed_chime_configured : !!s.suppress_speed_chime;
+      stChimeRow.hidden = !chimeConfigured;
       setValue(stChime, chimeConfigured
         ? (s.suppress_speed_chime ? "Suppressed" : "Not suppressed") : "Disabled",
         s.suppress_speed_chime ? "ok" : "off");

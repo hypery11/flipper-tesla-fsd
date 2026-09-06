@@ -385,7 +385,7 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <span class="lbl">Summon Status</span>
     <span class="pill off" id="summonStatus" title="Click to toggle" onclick="toggleSummonTemp()"><span class="pd"></span>--</span>
   </div>
-  <div class="row">
+  <div class="row" id="chimeStatusRow">
     <span class="lbl">Suppress Chime</span>
     <span class="pill off" id="chimeStatus"><span class="pd"></span>--</span>
   </div>
@@ -1023,6 +1023,8 @@ function upd(d){
   }
   var chimeConfigured=d.suppress_speed_chime_configured!==undefined?
     !!d.suppress_speed_chime_configured:!!d.suppress_speed_chime;
+  var chimeStatusRow=document.getElementById('chimeStatusRow');
+  if(chimeStatusRow)chimeStatusRow.hidden=!chimeConfigured;
   pill('chimeStatus', !!d.suppress_speed_chime,
     chimeConfigured?(d.suppress_speed_chime?'Suppressed':'Not suppressed'):'Disabled');
   var speedFresh=d.speed_seen===true;
@@ -1030,7 +1032,7 @@ function upd(d){
   var gearNames={1:'P',2:'R',3:'N',4:'D'};
   var gearSeen=d.vehicle_gear_seen===true;
   pill('vehicleGear', gearSeen, gearSeen?(gearNames[d.vehicle_gear]||'Unknown'):'Waiting');
-  var pedalSeen=d.di_torque_seen===true;
+  var pedalSeen=d.accelerator_pedal_seen===true;
   pill('acceleratorStatus', pedalSeen && d.pedal_pressed,
     pedalSeen?(d.pedal_pressed?'Pressed':'Released'):'Waiting');
   var brakeSeen=d.brake_status_seen===true;
@@ -1664,8 +1666,11 @@ static String build_json() {
     bool pedal_pressed = fsd_accelerator_pressed(&state);
     bool chime_suppression_active = fsd_speed_chime_suppression_active(&state);
     char di_torque_s[16];
+    char accelerator_pedal_s[16];
     char vehicle_speed_s[16];
     snprintf(di_torque_s, sizeof(di_torque_s), "%.1f", state.di_torque_nm);
+    snprintf(accelerator_pedal_s, sizeof(accelerator_pedal_s), "%.1f",
+         state.accelerator_pedal_percent);
     snprintf(vehicle_speed_s, sizeof(vehicle_speed_s), "%.1f", state.vehicle_speed_kph);
     const char *ap_das_profile =
         (state.hw_version == TeslaHW_HW4) ? "HW4: DAS 0x39B + ISA 0x399" :
@@ -1729,6 +1734,8 @@ static String build_json() {
     j += "\"vehicle_gear\":"; j += (int)state.vehicle_gear;             j += ',';
     j += "\"vehicle_gear_seen\":"; j += state.vehicle_gear_seen ? "true" : "false"; j += ',';
     j += "\"pedal_pressed\":"; j += pedal_pressed                       ? "true" : "false"; j += ',';
+    j += "\"accelerator_pedal_seen\":"; j += state.accelerator_pedal_seen ? "true" : "false"; j += ',';
+    j += "\"accelerator_pedal_percent\":"; j += accelerator_pedal_s;     j += ',';
     j += "\"di_torque_seen\":"; j += state.di_torque_seen              ? "true" : "false"; j += ',';
     j += "\"di_torque_nm\":"; j += di_torque_s;                         j += ',';
     j += "\"gear_lever_seen\":"; j += state.gear_lever_seen            ? "true" : "false"; j += ',';

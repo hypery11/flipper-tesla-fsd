@@ -802,33 +802,17 @@ void fsd_handle_esp_status(FSDState *state, const CanFrame *frame) {
 }
 
 void fsd_handle_di_torque(FSDState *state, const CanFrame *frame) {
-    if (frame->dlc < 2) return;
-    uint16_t raw = ((uint16_t)(frame->data[1] & 0x1Fu) << 8) | frame->data[0];
-    state->di_torque_nm = (float)raw * 0.25f - 750.0f;
+    if (frame->dlc < 5) return;
+    uint16_t raw = ((uint16_t)frame->data[3] >> 3) |
+                   ((uint16_t)frame->data[4] << 5);
+    int16_t signed_raw = (raw & 0x1000u) ? (int16_t)(raw | 0xE000u) : (int16_t)raw;
+    if (signed_raw == -4096) return;
+    state->di_torque_nm = (float)signed_raw * 2.0f;
     state->di_torque_seen = true;
-
-    if (state->di_torque_nm > DI_PEDAL_PRESS_TORQUE_NM) {
-        state->accelerator_release_count = 0;
-        if (!state->accelerator_pressed &&
-            ++state->accelerator_press_count >= DI_PEDAL_DEBOUNCE_FRAMES) {
-            state->accelerator_pressed = true;
-            state->accelerator_press_count = 0;
-        }
-    } else if (state->di_torque_nm < DI_PEDAL_RELEASE_TORQUE_NM) {
-        state->accelerator_press_count = 0;
-        if (state->accelerator_pressed &&
-            ++state->accelerator_release_count >= DI_PEDAL_DEBOUNCE_FRAMES) {
-            state->accelerator_pressed = false;
-            state->accelerator_release_count = 0;
-        }
-    } else {
-        state->accelerator_press_count = 0;
-        state->accelerator_release_count = 0;
-    }
 }
 
 bool fsd_accelerator_pressed(const FSDState *state) {
-    return state->di_torque_seen && state->accelerator_pressed;
+    return state->accelerator_pedal_seen && state->accelerator_pressed;
 }
 
 bool fsd_speed_chime_suppression_active(const FSDState *state) {
@@ -1079,6 +1063,31 @@ void fsd_handle_di_system(FSDState *state, const CanFrame *frame) {
     state->vehicle_gear =
         (frame->data[SIG_DI_GEAR_BYTE] >> SIG_DI_GEAR_SHIFT) & SIG_DI_GEAR_MASK;
     state->vehicle_gear_seen = true;
+
+    if (frame->dlc <= SIG_DI_ACCEL_PEDAL_BYTE) return;
+    uint8_t pedal_raw = frame->data[SIG_DI_ACCEL_PEDAL_BYTE];
+    if (pedal_raw == SIG_DI_ACCEL_PEDAL_SNA) return;
+
+    state->accelerator_pedal_percent = (float)pedal_raw * 0.4f;
+    state->accelerator_pedal_seen = true;
+    if (pedal_raw >= DI_PEDAL_PRESS_RAW) {
+        state->accelerator_release_count = 0;
+        if (!state->accelerator_pressed &&
+            ++state->accelerator_press_count >= DI_PEDAL_DEBOUNCE_FRAMES) {
+            state->accelerator_pressed = true;
+            state->accelerator_press_count = 0;
+        }
+    } else if (pedal_raw <= DI_PEDAL_RELEASE_RAW) {
+        state->accelerator_press_count = 0;
+        if (state->accelerator_pressed &&
+            ++state->accelerator_release_count >= DI_PEDAL_DEBOUNCE_FRAMES) {
+            state->accelerator_pressed = false;
+            state->accelerator_release_count = 0;
+        }
+    } else {
+        state->accelerator_press_count = 0;
+        state->accelerator_release_count = 0;
+    }
 }
 
 void fsd_handle_ui_map_data(FSDState *state, const CanFrame *frame, uint32_t now_ms) {
