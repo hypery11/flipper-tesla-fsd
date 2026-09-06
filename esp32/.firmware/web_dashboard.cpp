@@ -16,6 +16,8 @@
 #include "capability.h"
 #include "profile_match.h"
 #include "prefs.h"
+#include "config.h"
+#include "can_signals.h"
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 #include <WiFi.h>
@@ -32,6 +34,7 @@ static portMUX_TYPE *g_state_mux = nullptr;
 
 static WebServer        g_http(80);
 static WebSocketsServer g_ws(81);
+static bool             g_web_started = false;
 
 static uint32_t g_start_ms    = 0;
 static uint32_t g_last_rx     = 0;
@@ -155,6 +158,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 /* ── Cards ── */
 .card{background:var(--card);border-radius:16px;padding:16px;
   margin-bottom:12px;border:1px solid var(--border)}
+.card>summary{position:relative;cursor:pointer;list-style:none}
+.card>summary::-webkit-details-marker{display:none}
+.card>summary .card-head{margin-bottom:0}
+.card>summary:after{content:"";position:absolute;right:18px;top:6px;width:9px;height:9px;
+  border-right:2px solid var(--text2);border-bottom:2px solid var(--text2);
+  transform:rotate(45deg);transition:transform .2s}
+.card[open]>summary:after{transform:rotate(225deg);top:6px}
 .card-head{display:flex;align-items:center;gap:8px;margin-bottom:12px}
 .config-section{background:var(--card);border:1px solid var(--border);
   border-radius:16px;margin-bottom:12px;overflow:hidden}
@@ -371,7 +381,39 @@ input:checked+.sl2:before{transform:translateX(20px);background:#fff}
     <span class="lbl">CAN Vehicle</span>
     <span class="pill off" id="canVeh"><span class="pd"></span>--</span>
   </div>
+  <div class="row">
+    <span class="lbl">Summon Status</span>
+    <span class="pill off" id="summonStatus" title="Click to toggle" onclick="toggleSummonTemp()"><span class="pd"></span>--</span>
+  </div>
+  <div class="row" id="chimeStatusRow">
+    <span class="lbl">Suppress Chime</span>
+    <span class="pill off" id="chimeStatus"><span class="pd"></span>--</span>
+  </div>
 </div>
+
+<details class="card" open>
+  <summary><div class="card-head"><div class="icon ic-d">V</div><h2>Vehicle Status</h2></div></summary>
+  <div class="row">
+    <span class="lbl">Vehicle Speed</span>
+    <span class="pill off" id="vehicleSpeed"><span class="pd"></span>--</span>
+  </div>
+  <div class="row">
+    <span class="lbl">Vehicle Gear</span>
+    <span class="pill off" id="vehicleGear"><span class="pd"></span>--</span>
+  </div>
+  <div class="row">
+    <span class="lbl">Accelerator</span>
+    <span class="pill off" id="acceleratorStatus"><span class="pd"></span>--</span>
+  </div>
+  <div class="row">
+    <span class="lbl">Brake</span>
+    <span class="pill off" id="brakeStatus"><span class="pd"></span>--</span>
+  </div>
+  <div class="row">
+    <span class="lbl">Turn Signal</span>
+    <span class="pill off" id="turnSignal"><span class="pd"></span>--</span>
+  </div>
+</details>
 
 <!-- Battery -->
 <div class="card">
@@ -814,6 +856,7 @@ function pill(id,on,txt,warnClass){
   e.className='pill '+(warnClass||''+(on?'on':'off'));
   e.innerHTML='<span class="pd"></span>'+txt;
 }
+var summonTempDisabled=false;
 function dot(id,on){
   var e=document.getElementById(id);
   if(e)e.className='blinkdot'+(on?' hit':'');
@@ -836,7 +879,7 @@ function updateControlsSummary(d){
   if(d.bms_output)items.push('BMS');
   if(d.force_fsd)items.push('Force FSD');
   if(d.china_mode)items.push('China');
-  if(d.isa_speed_enabled&&d.suppress_speed_chime)items.push('Chime');
+  if(d.isa_speed_enabled&&d.suppress_speed_chime_configured)items.push('Chime');
   if(d.tlssc_restore)items.push('TLSSC');
   if(d.assist_tlssc_bit38)items.push('TLSSC bit38');
   if(d.display_enabled)items.push('Display');
@@ -966,6 +1009,39 @@ function upd(d){
 
   pill('nagSt', d.nag_killer, d.nag_killer?'ON':'OFF');
   pill('canVeh', d.can_vehicle_detected, d.can_vehicle_detected?'Detected':'No CAN Traffic');
+  var summonEnabled=!!d.summon_unlock;
+  var summonDisabled=!!d.summon_temp_disabled;
+  pill('summonStatus', summonEnabled && !summonDisabled,
+    summonDisabled?'Temp disabled':(summonEnabled?'Enabled':'Disabled'));
+  var summonEl=document.getElementById('summonStatus');
+  summonTempDisabled=summonDisabled;
+  if(summonEl) {
+    summonEl.dataset.tempDisabled=summonDisabled?'true':'false';
+    summonEl.dataset.summonEnabled=summonEnabled?'true':'false';
+    summonEl.style.cursor=summonEnabled?'pointer':'default';
+    summonEl.title=summonEnabled?'Click to toggle':'';
+  }
+  var chimeConfigured=d.suppress_speed_chime_configured!==undefined?
+    !!d.suppress_speed_chime_configured:!!d.suppress_speed_chime;
+  var chimeStatusRow=document.getElementById('chimeStatusRow');
+  if(chimeStatusRow)chimeStatusRow.hidden=!chimeConfigured;
+  pill('chimeStatus', !!d.suppress_speed_chime,
+    chimeConfigured?(d.suppress_speed_chime?'Suppressed':'Not suppressed'):'Disabled');
+  var speedFresh=d.speed_seen===true;
+  pill('vehicleSpeed', speedFresh, speedFresh?(Number(d.vehicle_speed_kph||0).toFixed(1)+' km/h'):'Waiting');
+  var gearNames={1:'P',2:'R',3:'N',4:'D'};
+  var gearSeen=d.vehicle_gear_seen===true;
+  pill('vehicleGear', gearSeen, gearSeen?(gearNames[d.vehicle_gear]||'Unknown'):'Waiting');
+  var pedalSeen=d.accelerator_pedal_seen===true;
+  pill('acceleratorStatus', pedalSeen && d.pedal_pressed,
+    pedalSeen?(d.pedal_pressed?'Pressed':'Released'):'Waiting');
+  var brakeSeen=d.brake_status_seen===true;
+  pill('brakeStatus', brakeSeen && d.driver_brake_applied,
+    brakeSeen?(d.driver_brake_applied?'Pressed':'Released'):'Waiting');
+  var turnSeen=d.turn_status_seen===true;
+  var turnLabel=turnSeen ? ((d.left_turn_active?'L':'')+(d.right_turn_active?'R':'' )||'Off') : 'Waiting';
+  pill('turnSignal', turnSeen && !!(d.left_turn_active||d.right_turn_active),
+    turnLabel);
   pill('bmsSt', d.bms && d.bms.seen, (d.bms && d.bms.seen)?'Live':'Waiting Frames');
   var bF=document.getElementById('bmsFrames');
   if(bF) bF.textContent='HV:'+(d.bms_hv_seen||0)+' SOC:'+(d.bms_soc_seen||0)+' TH:'+(d.bms_thermal_seen||0);
@@ -1008,7 +1084,7 @@ function upd(d){
   if(document.getElementById('swBms')) document.getElementById('swBms').checked=d.bms_output;
   if(document.getElementById('swFsd')) document.getElementById('swFsd').checked=d.force_fsd;
   if(document.getElementById('swChina')) document.getElementById('swChina').checked=d.china_mode;
-  if(document.getElementById('swChime')) document.getElementById('swChime').checked=d.suppress_speed_chime;
+  if(document.getElementById('swChime')) document.getElementById('swChime').checked=chimeConfigured;
   if(document.getElementById('rowChime')) document.getElementById('rowChime').style.display=d.isa_speed_enabled?'flex':'none';
   if(document.getElementById('swTlssc')) document.getElementById('swTlssc').checked=d.tlssc_restore;
   if(document.getElementById('swSummon')) document.getElementById('swSummon').checked=d.summon_unlock;
@@ -1244,6 +1320,19 @@ function cmd(c,v){
   if(ws&&ws.readyState===1) {
     ws.send(JSON.stringify({cmd:c,value:v}));
     busy = Date.now() + 3000;
+  }
+}
+function toggleSummonTemp(){
+  var e=document.getElementById('summonStatus');
+  if(e && e.dataset.summonEnabled==='true') {
+    var disabled=e.dataset.tempDisabled==='true';
+    cmd(disabled?'summon_force_recover':'summon_temp_disable',true);
+    busy=0;
+    summonTempDisabled=!disabled;
+    if(e) {
+      e.dataset.tempDisabled=disabled?'false':'true';
+    }
+    pill('summonStatus',!disabled,disabled?'Enabled':'Temp disabled');
   }
 }
 function toggleMode(){ cmd('mode',null); }
@@ -1517,6 +1606,17 @@ static String json_escape(const char *s) {
     return out;
 }
 
+static const char *gear_detent_name(uint8_t pos) {
+    switch (pos) {
+        case SIG_GEAR_LEVER_CENTER: return "center";
+        case SIG_GEAR_LEVER_HALF_UP: return "half_up";
+        case SIG_GEAR_LEVER_FULL_UP: return "full_up";
+        case SIG_GEAR_LEVER_HALF_DOWN: return "half_down";
+        case SIG_GEAR_LEVER_FULL_DOWN: return "full_down";
+        default: return "unknown";
+    }
+}
+
 // ── JSON builder ──────────────────────────────────────────────────────────────
 static String build_json() {
     FSDState state;
@@ -1563,6 +1663,15 @@ static String build_json() {
 
     String j;
     bool isa_speed_enabled = state.hw_version == TeslaHW_HW4;
+    bool pedal_pressed = fsd_accelerator_pressed(&state);
+    bool chime_suppression_active = fsd_speed_chime_suppression_active(&state);
+    char di_torque_s[16];
+    char accelerator_pedal_s[16];
+    char vehicle_speed_s[16];
+    snprintf(di_torque_s, sizeof(di_torque_s), "%.1f", state.di_torque_nm);
+    snprintf(accelerator_pedal_s, sizeof(accelerator_pedal_s), "%.1f",
+         state.accelerator_pedal_percent);
+    snprintf(vehicle_speed_s, sizeof(vehicle_speed_s), "%.1f", state.vehicle_speed_kph);
     const char *ap_das_profile =
         (state.hw_version == TeslaHW_HW4) ? "HW4: DAS 0x39B + ISA 0x399" :
         (state.hw_version == TeslaHW_HW3) ? "HW3: DAS 0x399" :
@@ -1606,9 +1715,35 @@ static String build_json() {
     j += "\"bms_output\":";    j += state.bms_output                   ? "true" : "false"; j += ',';
     j += "\"force_fsd\":";     j += state.force_fsd                    ? "true" : "false"; j += ',';
     j += "\"china_mode\":";    j += state.china_mode                   ? "true" : "false"; j += ',';
-    j += "\"suppress_speed_chime\":"; j += state.suppress_speed_chime  ? "true" : "false"; j += ',';
+    j += "\"suppress_speed_chime\":"; j += chime_suppression_active    ? "true" : "false"; j += ',';
+    j += "\"suppress_speed_chime_configured\":"; j += state.suppress_speed_chime ? "true" : "false"; j += ',';
     j += "\"tlssc_restore\":"; j += state.tlssc_restore                ? "true" : "false"; j += ',';
     j += "\"summon_unlock\":"; j += state.summon_unlock                ? "true" : "false"; j += ',';
+    j += "\"summon_auto_control\":"; j += (int)state.summon_auto_control; j += ',';
+    j += "\"summon_temp_disabled\":"; j += state.summon_temp_disabled ? "true" : "false"; j += ',';
+    j += "\"driver_brake_applied\":"; j += state.driver_brake_applied  ? "true" : "false"; j += ',';
+    j += "\"brake_status_seen\":"; j += state.brake_status_seen        ? "true" : "false"; j += ',';
+    j += "\"left_turn_active\":"; j += state.left_turn_active          ? "true" : "false"; j += ',';
+    j += "\"right_turn_active\":"; j += state.right_turn_active        ? "true" : "false"; j += ',';
+    j += "\"turn_status_seen\":"; j += state.turn_status_seen          ? "true" : "false"; j += ',';
+    j += "\"steering_angle_deg\":"; j += String(state.steering_angle_deg); j += ',';
+    j += "\"speed_seen\":"; j += state.speed_seen                      ? "true" : "false"; j += ',';
+    j += "\"vehicle_speed_kph\":"; j += vehicle_speed_s;                j += ',';
+    j += "\"di_digital_speed\":"; j += (int)state.di_digital_speed;     j += ',';
+    j += "\"ui_speed\":"; j += (int)state.ui_speed;                     j += ',';
+    j += "\"vehicle_gear\":"; j += (int)state.vehicle_gear;             j += ',';
+    j += "\"vehicle_gear_seen\":"; j += state.vehicle_gear_seen ? "true" : "false"; j += ',';
+    j += "\"pedal_pressed\":"; j += pedal_pressed                       ? "true" : "false"; j += ',';
+    j += "\"accelerator_pedal_seen\":"; j += state.accelerator_pedal_seen ? "true" : "false"; j += ',';
+    j += "\"accelerator_pedal_percent\":"; j += accelerator_pedal_s;     j += ',';
+    j += "\"di_torque_seen\":"; j += state.di_torque_seen              ? "true" : "false"; j += ',';
+    j += "\"di_torque_nm\":"; j += di_torque_s;                         j += ',';
+    j += "\"gear_lever_seen\":"; j += state.gear_lever_seen            ? "true" : "false"; j += ',';
+    j += "\"gear_lever_counter_seen\":"; j += state.gear_lever_counter_seen ? "true" : "false"; j += ',';
+    j += "\"gear_lever_pos\":"; j += (int)state.gear_lever_last_pos;   j += ',';
+    j += "\"gear_lever_counter\":"; j += (int)state.gear_lever_last_counter; j += ',';
+    j += "\"gear_lever_last_ms\":"; j += state.gear_lever_last_ms;      j += ',';
+    j += "\"gear_lever_label\":\""; j += gear_detent_name(state.gear_lever_last_pos); j += "\",";
     j += "\"continue_on_green\":"; j += state.continue_on_green         ? "true" : "false"; j += ',';
     j += "\"assist_tlssc_bit38\":"; j += state.assist_tlssc_bit38       ? "true" : "false"; j += ',';
     j += "\"assist_rhd_override\":"; j += state.assist_rhd_override      ? "true" : "false"; j += ',';
@@ -2052,6 +2187,26 @@ static void ws_event(uint8_t num, WStype_t type,
             Serial.printf("[Web] Suppress Speed Chime: %s\n", enabled ? "ON" : "OFF");
             prefs_save(&saved);
         }
+    } else if (strstr(buf, "\"summon_temp_disable\"")) {
+        state_enter();
+        if (g_state->summon_unlock) {
+            g_state->summon_temp_disabled = true;
+            g_state->summon_temp_recovery_armed = false;
+            g_state->summon_temp_disabled_ms = millis();
+        }
+        state_exit();
+        Serial.println("[Web] Summon temporary disable: ENABLED");
+    } else if (strstr(buf, "\"summon_force_recover\"")) {
+        bool recovered = false;
+        state_enter();
+        if (g_state->summon_unlock && g_state->summon_temp_disabled) {
+            g_state->summon_temp_disabled = false;
+            g_state->summon_temp_recovery_armed = false;
+            g_state->summon_temp_disabled_ms = 0;
+            recovered = true;
+        }
+        state_exit();
+        Serial.printf("[Web] Summon force recovery: %s\n", recovered ? "ENABLED" : "ignored");
     } else if (strstr(buf, "\"summon_unlock\"")) {
         if (vptr) {
             while (*vptr == ' ' || *vptr == ':') vptr++;
@@ -2059,6 +2214,11 @@ static void ws_event(uint8_t num, WStype_t type,
             FSDState saved;
             state_enter();
             g_state->summon_unlock = enabled;
+            if (!enabled) {
+                g_state->summon_temp_disabled = false;
+                g_state->summon_temp_recovery_armed = false;
+                g_state->summon_temp_disabled_ms = 0;
+            }
             saved = *g_state;
             state_exit();
             Serial.printf("[Web] Summon EU Unlock: %s\n", enabled ? "ON" : "OFF");
@@ -2518,10 +2678,10 @@ static void handle_ota_done() {
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
-void web_dashboard_init(FSDState *state,
-                        CanDriver **can_buses,
-                        uint8_t can_count,
-                        portMUX_TYPE *state_mux) {
+void web_dashboard_bind_control(FSDState *state,
+                                CanDriver **can_buses,
+                                uint8_t can_count,
+                                portMUX_TYPE *state_mux) {
     g_state       = state;
     g_can_buses   = can_buses;
     g_can_count   = can_count;
@@ -2530,6 +2690,13 @@ void web_dashboard_init(FSDState *state,
     g_last_fps_ms = millis();
     g_last_rx     = state ? state->rx_count : 0;
     g_last_can_seen_ms = (state && state->rx_count > 0) ? millis() : 0;
+}
+
+void web_dashboard_init(FSDState *state,
+                        CanDriver **can_buses,
+                        uint8_t can_count,
+                        portMUX_TYPE *state_mux) {
+    web_dashboard_bind_control(state, can_buses, can_count, state_mux);
 
     g_http.on("/",           HTTP_GET,  handle_root);
     g_http.on("/api/status", HTTP_GET,  handle_status);
@@ -2545,16 +2712,201 @@ void web_dashboard_init(FSDState *state,
 
     g_ws.begin();
     g_ws.onEvent(ws_event);
+    g_web_started = true;
 
     Serial.println("[Web] HTTP :80  WS :81 — ready");
+}
+
+static bool serial_json_get_string_value(const char *line,
+                                         const char *key,
+                                         char *out,
+                                         size_t out_len) {
+    if (line == nullptr || key == nullptr || out == nullptr || out_len == 0) return false;
+
+    char key_pat[32];
+    snprintf(key_pat, sizeof(key_pat), "\"%s\"", key);
+    const char *p = strstr(line, key_pat);
+    if (p == nullptr) return false;
+    p = strchr(p, ':');
+    if (p == nullptr) return false;
+    p++;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != '"') return false;
+    p++;
+
+    size_t i = 0;
+    while (*p && *p != '"' && i + 1 < out_len) out[i++] = *p++;
+    out[i] = '\0';
+    return *p == '"' && i > 0;
+}
+
+static CanDriver *serial_gear_bus() {
+    if (g_can_buses == nullptr || g_can_count == 0) return nullptr;
+    uint8_t index = (GEAR_LEVER_TX_BUS_INDEX < g_can_count) ? GEAR_LEVER_TX_BUS_INDEX : 0u;
+    return g_can_buses[index];
+}
+
+static bool serial_send_gear_pulse(uint8_t detent,
+                                   uint8_t *out_counter,
+                                   const char **out_error) {
+    if (out_error) *out_error = nullptr;
+    FSDState s;
+    if (!state_copy(&s)) {
+        if (out_error) *out_error = "state_unavailable";
+        return false;
+    }
+    if (s.op_mode != OpMode_Active) {
+        if (out_error) *out_error = "listen_only_mode";
+        return false;
+    }
+    if (!s.gear_lever_counter_seen) {
+        if (out_error) *out_error = "gear_counter_unavailable";
+        return false;
+    }
+    uint32_t now = millis();
+    if (s.gear_lever_last_ms == 0u ||
+        (uint32_t)(now - s.gear_lever_last_ms) > GEAR_LEVER_CACHED_COUNTER_MAX_AGE_MS) {
+        if (out_error) *out_error = "gear_counter_stale";
+        return false;
+    }
+
+    CanDriver *bus = serial_gear_bus();
+    if (bus == nullptr) {
+        if (out_error) *out_error = "gear_bus_unavailable";
+        return false;
+    }
+
+    uint8_t c1 = (uint8_t)((s.gear_lever_last_counter + 1u) & SIG_GEAR_LEVER_COUNTER_MASK);
+    uint8_t c2 = (uint8_t)((c1 + 1u) & SIG_GEAR_LEVER_COUNTER_MASK);
+    CanFrame detent_frame;
+    CanFrame center_frame;
+    if (!fsd_build_gear_lever_frame(&detent_frame, detent, c1) ||
+        !fsd_build_gear_lever_frame(&center_frame, SIG_GEAR_LEVER_CENTER, c2)) {
+        if (out_error) *out_error = "gear_build_failed";
+        return false;
+    }
+    if (!bus->send(detent_frame) || !bus->send(center_frame)) {
+        if (out_error) *out_error = "gear_send_failed";
+        return false;
+    }
+
+    state_enter();
+    g_state->gear_lever_last_counter = c2;
+    g_state->gear_lever_counter_seen = true;
+    g_state->gear_lever_last_pos = SIG_GEAR_LEVER_CENTER;
+    g_state->gear_lever_seen = true;
+    g_state->gear_lever_last_ms = now;
+    state_exit();
+
+    if (out_counter) *out_counter = c2;
+    return true;
+}
+
+bool web_dashboard_handle_serial_json(const char *line) {
+    if (line == nullptr) return false;
+
+    while (*line == ' ' || *line == '\t') line++;
+    if (*line != '{') return false;
+    if (strstr(line, "\"cmd\"") == nullptr) return false;
+
+    size_t len = strlen(line);
+    while (len > 0) {
+        char c = line[len - 1];
+        if (c == '\r' || c == '\n' || c == ' ' || c == '\t') len--;
+        else break;
+    }
+
+    if (len == 0) return false;
+    if (g_state == nullptr) {
+        Serial.println("{\"ok\":false,\"error\":\"dashboard_not_ready\"}");
+        return true;
+    }
+
+    char cmd[32] = {};
+    if (!serial_json_get_string_value(line, "cmd", cmd, sizeof(cmd))) {
+        Serial.println("{\"ok\":false,\"error\":\"missing_cmd\"}");
+        return true;
+    }
+    if (strcmp(cmd, "status") == 0) {
+        Serial.println(build_json());
+        return true;
+    }
+    if (strcmp(cmd, "summon_force_recover") == 0) {
+        bool recovered = false;
+        state_enter();
+        if (g_state->summon_unlock && g_state->summon_temp_disabled) {
+            g_state->summon_temp_disabled = false;
+            g_state->summon_temp_recovery_armed = false;
+            g_state->summon_temp_disabled_ms = 0;
+            recovered = true;
+        }
+        state_exit();
+        Serial.printf("{\"ok\":true,\"cmd\":\"summon_force_recover\",\"recovered\":%s}\n",
+                      recovered ? "true" : "false");
+        return true;
+    }
+    if (strcmp(cmd, "summon_temp_disable") == 0) {
+        state_enter();
+        if (g_state->summon_unlock) {
+            g_state->summon_temp_disabled = true;
+            g_state->summon_temp_recovery_armed = false;
+            g_state->summon_temp_disabled_ms = millis();
+        }
+        state_exit();
+        Serial.println("{\"ok\":true,\"cmd\":\"summon_temp_disable\"}");
+        return true;
+    }
+    if (strcmp(cmd, "gear") == 0) {
+        char value[32] = {};
+        if (!serial_json_get_string_value(line, "value", value, sizeof(value))) {
+            Serial.println("{\"ok\":false,\"error\":\"missing_gear_value\"}");
+            return true;
+        }
+
+        uint8_t detent = SIG_GEAR_LEVER_CENTER;
+        if (strcmp(value, "down") == 0 || strcmp(value, "drive") == 0 || strcmp(value, "d") == 0) {
+            detent = SIG_GEAR_LEVER_FULL_DOWN;
+        } else if (strcmp(value, "up") == 0 || strcmp(value, "park") == 0 ||
+                   strcmp(value, "reverse") == 0 || strcmp(value, "neutral") == 0 ||
+                   strcmp(value, "p") == 0 || strcmp(value, "r") == 0 || strcmp(value, "n") == 0) {
+            detent = SIG_GEAR_LEVER_FULL_UP;
+        } else {
+            Serial.println("{\"ok\":false,\"error\":\"unsupported_gear_value\"}");
+            return true;
+        }
+
+        uint8_t counter = 0;
+        const char *err = nullptr;
+        if (!serial_send_gear_pulse(detent, &counter, &err)) {
+            Serial.printf("{\"ok\":false,\"error\":\"%s\"}\n", err ? err : "gear_send_failed");
+            return true;
+        }
+        Serial.printf("{\"ok\":true,\"cmd\":\"gear\",\"value\":\"%s\",\"counter\":%u}\n",
+                      value, counter);
+        return true;
+    }
+
+    uint8_t payload[256];
+    if (len >= sizeof(payload)) {
+        Serial.println("{\"ok\":false,\"error\":\"command_too_long\"}");
+        return true;
+    }
+    size_t n = len;
+    memcpy(payload, line, n);
+    payload[n] = '\0';
+    ws_event(0, WStype_TEXT, payload, n);
+    Serial.println("{\"ok\":true}");
+    return true;
 }
 
 void web_dashboard_update() {
     if (g_state == nullptr) return;   // init was never called (WiFi failed)
 
-    g_http.handleClient();
-    g_ws.loop();
-    http_can_stream_update();
+    if (g_web_started) {
+        g_http.handleClient();
+        g_ws.loop();
+        http_can_stream_update();
+    }
 
     // FPS calculation + 1 Hz WebSocket broadcast
     uint32_t now = millis();
@@ -2568,8 +2920,10 @@ void web_dashboard_update() {
         g_last_rx    = rx;
         g_last_fps_ms = now;
 
-        String json = build_json();
-        Serial.printf("[WS] state json=%u bytes\n", (unsigned)json.length());
-        g_ws.broadcastTXT(json.c_str(), json.length());
+        if (g_web_started) {
+            String json = build_json();
+            Serial.printf("[WS] state json=%u bytes\n", (unsigned)json.length());
+            g_ws.broadcastTXT(json.c_str(), json.length());
+        }
     }
 }

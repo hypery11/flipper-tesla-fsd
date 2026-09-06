@@ -29,5 +29,23 @@ void web_dashboard_init(FSDState *state,
                         uint8_t can_count,
                         portMUX_TYPE *state_mux);
 
+/**
+ * Bind shared state/control pointers without starting HTTP/WS servers.
+ * Useful for serial-only control fallback when WiFi init fails.
+ */
+void web_dashboard_bind_control(FSDState *state,
+                                CanDriver **can_buses,
+                                uint8_t can_count,
+                                portMUX_TYPE *state_mux);
+
 /** Service HTTP requests and WebSocket messages; broadcast state at 1 Hz. */
 void web_dashboard_update();
+
+/**
+ * Handle one serial JSON control line (same command JSON shape as WebSocket).
+ *
+ * @param line One complete JSON line (without trailing newline required).
+ * @return true if the line was treated as a serial JSON command (handled or rejected);
+ *         false when the line is not JSON and should be handled by other serial commands.
+ */
+bool web_dashboard_handle_serial_json(const char *line);

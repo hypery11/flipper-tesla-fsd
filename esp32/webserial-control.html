@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tesla FSD ESP32 - Web Serial Control</title>
+  <style>
+    :root {
+      --bg: #0a0a1a;
+      --card: #111827;
+      --border: #1e293b;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --ok: #00d4aa;
+      --warn: #ffd93d;
+      --err: #ff6b6b;
+      --btn: #1f2937;
+      --card2: #1a1f35;
+      --text2: #94a3b8;
+      --text3: #475569;
+      --accent2: #00b894;
+      --blue: #4dabf7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 18px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    details.card > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+    details.card > summary::-webkit-details-marker {
+      display: none;
+    }
+    details.card > summary::after {
+      content: "+";
+      float: right;
+      color: var(--muted);
+    }
+    details.card[open] > summary::after {
+      content: "";
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 1.2rem;
+    }
+    h2 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .status {
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .err { color: var(--err); }
+    button, select, input, textarea {
+      background: var(--btn);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.9rem;
+    }
+    button {
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+    textarea {
+      width: 100%;
+      min-height: 84px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      resize: vertical;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 8px;
+    }
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 8px;
+    }
+    .status-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .status-card h2 {
+      margin: 0 0 12px;
+      color: var(--text2);
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 9px 0;
+    }
+    .status-row + .status-row {
+      border-top: 1px solid rgba(255,255,255,.04);
+    }
+    .status-label {
+      color: var(--text2);
+      font-size: 0.85rem;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .pill.ok { background: rgba(0,212,170,.14); color: var(--ok); }
+    .pill.warn { background: rgba(255,107,107,.14); color: var(--err); }
+    .pill.off { background: rgba(71,85,105,.22); color: var(--text3); }
+    .pill.err { background: rgba(255,107,107,.14); color: var(--err); }
+    .pill.actionable { cursor: pointer; }
+    .pill-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: currentColor;
+      box-shadow: 0 0 5px currentColor;
+    }
+    .switch-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 0;
+    }
+    .switch-row + .switch-row { border-top: 1px solid rgba(255,255,255,.04); }
+    .switch-label { color: var(--text2); font-size: 0.85rem; }
+    .main-grid { display: flex; flex-direction: column; }
+    @media (min-width: 900px) {
+      .main-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+      .status-column { grid-column: 1; grid-row: 1; }
+      .control-column { grid-column: 2; grid-row: 1; }
+    }
+    .sw { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+    .sw input { opacity: 0; width: 0; height: 0; }
+    .sl2 { position: absolute; inset: 0; cursor: pointer; background: #2a2a3e; border-radius: 24px; transition: .3s; }
+    .sl2:before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: #555; border-radius: 50%; transition: .3s; }
+    .sw input:checked + .sl2 { background: var(--ok); }
+    .sw input:checked + .sl2:before { transform: translateX(20px); background: #fff; }
+    .kv {
+      background: #0b1020;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+    }
+    .k {
+      color: var(--muted);
+      font-size: 0.78rem;
+      margin-bottom: 3px;
+    }
+    .v {
+      font-size: 0.98rem;
+      font-weight: 600;
+    }
+    .hint {
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.35;
+    }
+    pre {
+      margin: 0;
+      max-height: 280px;
+      overflow: auto;
+      background: #0b1020;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 0.8rem;
+      line-height: 1.35;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Tesla FSD ESP32 - Web Serial Control</h1>
+      <div class="row">
+        <button id="connectBtn">Connect</button>
+        <button id="disconnectBtn" disabled>Disconnect</button>
+        <button id="ipBtn" disabled>Print WiFi URLs (ip)</button>
+        <select id="baud">
+          <option value="115200" selected>115200 baud</option>
+          <option value="921600">921600 baud</option>
+        </select>
+      </div>
+      <div id="connStatus" class="status warn">Disconnected</div>
+      <div class="hint" style="margin-top: 8px;">
+        Works in Chromium browsers with Web Serial support (Chrome / Edge). Use HTTPS or localhost.
+      </div>
+    </div>
+
+    <div class="main-grid">
+    <div class="control-column">
+    <div class="status-card">
+      <h2>Controls</h2>
+      <div class="switch-row"><span class="switch-label">Hardware</span><select data-state="hw_override" data-cmd="hw_override">
+        <option value="0">Auto-detect</option><option value="3">Force HW4</option><option value="2">Force HW3</option><option value="1">Force Legacy</option>
+      </select></div>
+      <div class="switch-row"><span class="switch-label">Listen-Only / Active</span><label class="sw"><input type="checkbox" data-cmd="mode"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Ignore OTA</span><label class="sw"><input type="checkbox" data-state="ignore_ota" data-cmd="ignore_ota"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">FSD Unlock</span><label class="sw"><input type="checkbox" data-state="fsd_unlock" data-cmd="fsd_unlock"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">NAG Killer</span><label class="sw"><input type="checkbox" data-state="nag_killer" data-cmd="nag"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Continuous AP</span><label class="sw"><input type="checkbox" data-state="continuous_ap" data-cmd="continuous_ap"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">AP-First (14.x)</span><label class="sw"><input type="checkbox" data-state="ap_first" data-cmd="ap_first"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Instant Engage (exp.)</span><label class="sw"><input type="checkbox" data-state="ap_first_edge" data-cmd="ap_first_edge"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Minimal Inject (exp.)</span><label class="sw"><input type="checkbox" data-state="ap_first_minimal" data-cmd="ap_first_minimal"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Nag EPAS-faithful (14.x, exp.)</span><label class="sw"><input type="checkbox" data-state="nag_faithful" data-cmd="nag_faithful"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Soft Engage (14.x, exp.)</span><label class="sw"><input type="checkbox" data-state="soft_engage" data-cmd="soft_engage"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Nag Burst (14.x, exp.)</span><label class="sw"><input type="checkbox" data-state="nag_burst" data-cmd="nag_burst"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Abort Guard (14.x, exp.)</span><label class="sw"><input type="checkbox" data-state="abort_guard" data-cmd="abort_guard"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">BMS Display</span><label class="sw"><input type="checkbox" data-state="bms_output" data-cmd="bms"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Force FSD</span><label class="sw"><input type="checkbox" data-state="force_fsd" data-cmd="force_fsd"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">China Mode</span><label class="sw"><input type="checkbox" data-state="china_mode" data-cmd="china_mode"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Suppress Chime</span><label class="sw"><input type="checkbox" data-state="suppress_speed_chime_configured" data-cmd="suppress_speed_chime"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">TLSSC Restore</span><label class="sw"><input type="checkbox" data-state="tlssc_restore" data-cmd="tlssc_restore"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Summon EU Unlock</span><label class="sw"><input type="checkbox" data-state="summon_unlock" data-cmd="summon_unlock"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Continue on Green</span><label class="sw"><input type="checkbox" data-state="continue_on_green" data-cmd="continue_on_green"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">TLSSC bit38</span><label class="sw"><input type="checkbox" data-state="assist_tlssc_bit38" data-cmd="assist_tlssc_bit38"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Right-Hand Drive (RHD)</span><label class="sw"><input type="checkbox" data-state="assist_rhd_override" data-cmd="assist_rhd_override"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Telemetry Off (experimental)</span><label class="sw"><input type="checkbox" data-state="assist_telemetry_off" data-cmd="assist_telemetry_off"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">AP Branch/Tier (experimental)</span><select data-state="apmv3_branch" data-cmd="apmv3_branch">
+        <option value="255">Off</option><option value="0">Live</option><option value="1">Stage</option><option value="2">Dev</option><option value="3">Stage2</option><option value="4">EAP</option><option value="5">Demo</option>
+      </select></div>
+      <div class="switch-row"><span class="switch-label">Track Mode (experimental)</span><label class="sw"><input type="checkbox" data-state="track_mode_inject" data-cmd="track_mode_inject"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Handling Balance</span><input type="range" min="0" max="100" data-state="track_rotation_pct" data-cmd="track_rotation_pct"></div>
+      <div class="switch-row"><span class="switch-label">Stability Assist</span><input type="range" min="0" max="100" data-state="track_stability_pct" data-cmd="track_stability_pct"></div>
+      <div class="switch-row"><span class="switch-label">Post-drive Cooling</span><label class="sw"><input type="checkbox" data-state="track_post_cooling" data-cmd="track_post_cooling"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Compressor Overclock</span><label class="sw"><input type="checkbox" data-state="track_cmp_overclock" data-cmd="track_cmp_overclock"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">Black-box Capture</span><label class="sw"><input type="checkbox" data-state="blackbox_enabled" data-cmd="blackbox_enable"><span class="sl2"></span></label></div>
+      <div class="switch-row"><span class="switch-label">CAN Dump</span><label class="sw"><input type="checkbox" data-state="can_dump" data-cmd="dump"><span class="sl2"></span></label></div>
+    </div>
+    </div>
+
+    <div class="status-column">
+    <div class="status-card">
+      <h2>FSD Status</h2>
+      <div class="status-row"><span class="status-label">AP Status</span><span class="pill off" id="stAp"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">Mode</span><span class="pill off" id="stMode"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">Hardware</span><span class="pill off" id="stHardware"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">NAG Killer</span><span class="pill off" id="stNag"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">CAN Vehicle</span><span class="pill off" id="stCan"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">Summon Status</span><span class="pill off" id="stSummon" title="Click to toggle"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row" id="stChimeRow"><span class="status-label">Suppress Chime</span><span class="pill off" id="stChime"><span class="pill-dot"></span>--</span></div>
+    </div>
+
+    <div class="status-card">
+      <h2>Vehicle Status</h2>
+      <div class="status-row"><span class="status-label">Vehicle Speed</span><span class="pill off" id="stSpeed"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">Vehicle Gear</span><span class="pill off" id="stVehicleGear"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">Accelerator</span><span class="pill off" id="stPedal"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">Brake</span><span class="pill off" id="stBrake"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">Turn Signal</span><span class="pill off" id="stTurn"><span class="pill-dot"></span>--</span></div>
+    </div>
+
+    <div class="status-card">
+      <h2>Battery</h2>
+      <div class="status-row"><span class="status-label">BMS Status</span><span class="pill off" id="stBms"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">BMS Frames</span><span class="pill off" id="stBmsFrames"><span class="pill-dot"></span>--</span></div>
+    </div>
+
+    <div class="status-card">
+      <h2>CAN Bus</h2>
+      <div class="status-row"><span class="status-label">RX Frames</span><span class="pill off" id="stRx"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">TX Frames</span><span class="pill off" id="stTx"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">TX Errors</span><span class="pill off" id="stCrc"><span class="pill-dot"></span>--</span></div>
+      <div class="status-row"><span class="status-label">Frames/s</span><span class="pill off" id="stFps"><span class="pill-dot"></span>--</span></div>
+    </div>
+    </div>
+    </div>
+
+    <div class="card">
+      <h2>Send Raw JSON Line</h2>
+      <textarea id="rawInput">{ "cmd": "mode", "value": true }</textarea>
+      <div class="row" style="margin-top: 8px;">
+        <button id="sendRawBtn" disabled>Send JSON</button>
+        <button id="clearLogBtn">Clear Log</button>
+      </div>
+      <div class="hint">Each send is one JSON line with newline ending. Device replies with JSON ack.</div>
+    </div>
+
+    <div class="card">
+      <h2>Serial Log</h2>
+      <pre id="log"></pre>
+    </div>
+  </div>
+
+  <script>
+    const connectBtn = document.getElementById("connectBtn");
+    const disconnectBtn = document.getElementById("disconnectBtn");
+    const ipBtn = document.getElementById("ipBtn");
+    const sendRawBtn = document.getElementById("sendRawBtn");
+    const clearLogBtn = document.getElementById("clearLogBtn");
+    const connStatus = document.getElementById("connStatus");
+    const baudSel = document.getElementById("baud");
+    const rawInput = document.getElementById("rawInput");
+    const logEl = document.getElementById("log");
+    const stMode = document.getElementById("stMode");
+    const stAp = document.getElementById("stAp");
+    const stHardware = document.getElementById("stHardware");
+    const stNag = document.getElementById("stNag");
+    const stSpeed = document.getElementById("stSpeed");
+    const stVehicleGear = document.getElementById("stVehicleGear");
+    const stBrake = document.getElementById("stBrake");
+    const stPedal = document.getElementById("stPedal");
+    const stSummon = document.getElementById("stSummon");
+    const stChime = document.getElementById("stChime");
+    const stChimeRow = document.getElementById("stChimeRow");
+    const stTurn = document.getElementById("stTurn");
+    const stBms = document.getElementById("stBms");
+    const stBmsFrames = document.getElementById("stBmsFrames");
+    const stCan = document.getElementById("stCan");
+    const stRx = document.getElementById("stRx");
+    const stTx = document.getElementById("stTx");
+    const stCrc = document.getElementById("stCrc");
+    const stFps = document.getElementById("stFps");
+
+    let port = null;
+    let writer = null;
+    let reader = null;
+    let readLoopRunning = false;
+    let statusTimer = null;
+    let statusRequestInFlight = false;
+
+    function setStatus(text, cls) {
+      connStatus.className = "status " + (cls || "");
+      connStatus.textContent = text;
+    }
+
+    function appendLog(line) {
+      const now = new Date().toLocaleTimeString();
+      logEl.textContent += `[${now}] ${line}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setValue(el, text, cls) {
+      el.className = "pill " + (cls || "off");
+      el.replaceChildren(
+        Object.assign(document.createElement("span"), { className: "pill-dot" }),
+        document.createTextNode(text)
+      );
+    }
+
+    function applyStatus(s) {
+      document.querySelectorAll("[data-state]").forEach((control) => {
+        const key = control.getAttribute("data-state");
+        if (control.type === "checkbox" && typeof s[key] === "boolean") {
+          control.checked = s[key];
+        } else if ((control.tagName === "SELECT" || control.type === "range") && s[key] !== undefined) {
+          control.value = String(s[key]);
+        }
+      });
+      const active = Number(s.op_mode) === 1;
+      const modeControl = document.querySelector('[data-cmd="mode"]');
+      if (modeControl) modeControl.checked = active;
+      setValue(stAp, s.ap_active ? "Active" : "Waiting", s.ap_active ? "ok" : "off");
+      setValue(stMode, active ? "Active" : "Listen-Only", active ? "ok" : "off");
+      const hardwareNames = { 1: "HW1 Legacy", 2: "HW3", 3: "HW4" };
+      setValue(stHardware, hardwareNames[s.hw_version] || "?", s.hw_version ? "ok" : "off");
+      setValue(stNag, s.nag_killer ? "ON" : "OFF", s.nag_killer ? "ok" : "off");
+      setValue(stCan, s.can_vehicle_detected ? "Detected" : "No CAN Traffic", s.can_vehicle_detected ? "ok" : "off");
+      const speedSeen = s.speed_fresh !== undefined ? s.speed_fresh : s.speed_seen;
+      setValue(stSpeed, speedSeen ? (Number(s.vehicle_speed_kph).toFixed(1) + " km/h") : "Waiting",
+        speedSeen ? "ok" : "off");
+      const vehicleGearNames = { 1: "P", 2: "R", 3: "N", 4: "D" };
+      const vehicleGear = s.vehicle_gear_seen
+        ? (vehicleGearNames[s.vehicle_gear] || "Unknown") : "Waiting";
+      setValue(stVehicleGear, vehicleGear, s.vehicle_gear_seen ? "ok" : "off");
+      const brake = s.brake_status_seen ? (s.driver_brake_applied ? "Pressed" : "Released") : "Waiting";
+      setValue(stBrake, brake, s.driver_brake_applied ? "ok" : "");
+      const turnSeen = s.turn_status_seen === true;
+      const turn = turnSeen ? ((s.left_turn_active ? "L" : "") + (s.right_turn_active ? "R" : "") || "Off") : "Waiting";
+      setValue(stTurn, turn, turnSeen && (s.left_turn_active || s.right_turn_active) ? "ok" : "");
+      const pedalSeen = s.accelerator_pedal_seen === true;
+      const pedal = pedalSeen ? (s.pedal_pressed ? "Pressed" : "Released") : "Waiting";
+      setValue(stPedal, pedal, s.pedal_pressed ? "ok" : "");
+      const summonStatus = s.summon_temp_disabled ? "Temp disabled"
+        : (s.summon_unlock ? "Enabled" : "Disabled");
+      setValue(stSummon, summonStatus, s.summon_unlock && !s.summon_temp_disabled ? "ok" : "off");
+      stSummon.dataset.tempDisabled = s.summon_temp_disabled ? "true" : "false";
+      stSummon.dataset.summonEnabled = s.summon_unlock ? "true" : "false";
+      stSummon.classList.toggle("actionable", !!s.summon_unlock);
+      const chimeConfigured = s.suppress_speed_chime_configured !== undefined
+        ? !!s.suppress_speed_chime_configured : !!s.suppress_speed_chime;
+      stChimeRow.hidden = !chimeConfigured;
+      setValue(stChime, chimeConfigured
+        ? (s.suppress_speed_chime ? "Suppressed" : "Not suppressed") : "Disabled",
+        s.suppress_speed_chime ? "ok" : "off");
+      const bmsSeen = !!(s.bms && s.bms.seen);
+      setValue(stBms, bmsSeen ? "Live" : "Waiting Frames", bmsSeen ? "ok" : "off");
+      setValue(stBmsFrames, "HV:" + (s.bms_hv_seen || 0) + " SOC:" + (s.bms_soc_seen || 0) +
+        " TH:" + (s.bms_thermal_seen || 0), "off");
+      setValue(stRx, String(s.rx_count || 0), "off");
+      setValue(stTx, String(s.tx_count || 0), "off");
+      setValue(stCrc, String(s.crc_errors || 0), s.crc_errors ? "warn" : "off");
+      setValue(stFps, Number(s.fps || 0).toFixed(1), "off");
+    }
+
+    function setConnectedUi(connected) {
+      connectBtn.disabled = connected;
+      disconnectBtn.disabled = !connected;
+      ipBtn.disabled = !connected;
+      sendRawBtn.disabled = !connected;
+      document.querySelectorAll("[data-cmd]").forEach((btn) => { btn.disabled = !connected; });
+    }
+
+    function parseValue(raw) {
+      if (raw === "true") return true;
+      if (raw === "false") return false;
+      const n = Number(raw);
+      if (!Number.isNaN(n)) return n;
+      return raw;
+    }
+
+    async function sendJson(obj) {
+      if (!writer) throw new Error("Serial not connected");
+      const line = JSON.stringify(obj) + "\n";
+      await writer.write(new TextEncoder().encode(line));
+      appendLog(`TX ${line.trim()}`);
+    }
+
+    async function requestStatus() {
+      if (statusRequestInFlight || !writer) return;
+      statusRequestInFlight = true;
+      try {
+        await sendJson({ cmd: "status", value: true });
+      } finally {
+        statusRequestInFlight = false;
+      }
+    }
+
+    async function sendTextLine(text) {
+      if (!writer) throw new Error("Serial not connected");
+      const line = text.trim() + "\n";
+      await writer.write(new TextEncoder().encode(line));
+      appendLog(`TX ${line.trim()}`);
+    }
+
+    async function readLoop() {
+      readLoopRunning = true;
+      let text = "";
+      while (readLoopRunning && port && port.readable) {
+        try {
+          const localReader = port.readable.getReader();
+          reader = localReader;
+          try {
+            while (readLoopRunning) {
+              const { value, done } = await localReader.read();
+              if (done) break;
+              if (!value) continue;
+              text += new TextDecoder().decode(value, { stream: true });
+              let idx;
+              while ((idx = text.indexOf("\n")) >= 0) {
+                const line = text.slice(0, idx).trim();
+                text = text.slice(idx + 1);
+                if (line) {
+                  appendLog(`RX ${line}`);
+                  try {
+                    const obj = JSON.parse(line);
+                    if (obj && Object.prototype.hasOwnProperty.call(obj, "op_mode")) {
+                      applyStatus(obj);
+                    }
+                  } catch (_) {}
+                }
+              }
+            }
+          } finally {
+            localReader.releaseLock();
+          }
+        } catch (err) {
+          appendLog(`RX error: ${err.message || err}`);
+          break;
+        }
+      }
+      readLoopRunning = false;
+    }
+
+    async function connect() {
+      if (!("serial" in navigator)) {
+        setStatus("Web Serial API is not supported in this browser.", "err");
+        return;
+      }
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({
+          baudRate: Number(baudSel.value),
+          dataBits: 8,
+          stopBits: 1,
+          parity: "none",
+          flowControl: "none"
+        });
+        writer = port.writable.getWriter();
+        setConnectedUi(true);
+        setStatus("Connected", "ok");
+        appendLog("Connected to serial port");
+        readLoop();
+        // Opening a USB serial port commonly resets the ESP32. Give its
+        // boot log time to finish, then poll repeatedly until a status line
+        // is received instead of losing the first request during reset.
+        window.setTimeout(() => {
+          requestStatus().catch((err) => appendLog(`Status request error: ${err.message || err}`));
+        }, 1200);
+        statusTimer = window.setInterval(() => {
+          requestStatus().catch((err) => appendLog(`Status poll error: ${err.message || err}`));
+        }, 1000);
+      } catch (err) {
+        setStatus("Connect failed", "err");
+        appendLog(`Connect failed: ${err.message || err}`);
+      }
+    }
+
+    async function disconnect() {
+      readLoopRunning = false;
+      if (statusTimer !== null) {
+        window.clearInterval(statusTimer);
+        statusTimer = null;
+      }
+      try {
+        if (reader) {
+          await reader.cancel();
+          reader = null;
+        }
+      } catch (_) {}
+      try {
+        if (writer) {
+          writer.releaseLock();
+          writer = null;
+        }
+      } catch (_) {}
+      try {
+        if (port) {
+          await port.close();
+          port = null;
+        }
+      } catch (err) {
+        appendLog(`Disconnect warning: ${err.message || err}`);
+      }
+      statusRequestInFlight = false;
+      setConnectedUi(false);
+      setStatus("Disconnected", "warn");
+      appendLog("Disconnected");
+    }
+
+    connectBtn.addEventListener("click", connect);
+    disconnectBtn.addEventListener("click", disconnect);
+
+    stSummon.addEventListener("click", async () => {
+      if (stSummon.dataset.summonEnabled !== "true") return;
+      try {
+        const temporaryDisabled = stSummon.dataset.tempDisabled === "true";
+        await sendJson({
+          cmd: temporaryDisabled ? "summon_force_recover" : "summon_temp_disable",
+          value: true
+        });
+        setValue(stSummon, temporaryDisabled ? "Enabled" : "Temp disabled",
+          temporaryDisabled ? "ok" : "warn");
+        stSummon.dataset.tempDisabled = temporaryDisabled ? "false" : "true";
+        window.setTimeout(() => {
+          requestStatus().catch(() => {});
+        }, 120);
+      } catch (err) {
+        appendLog(`TX error: ${err.message || err}`);
+      }
+    });
+
+    ipBtn.addEventListener("click", async () => {
+      try {
+        await sendTextLine("ip");
+      } catch (err) {
+        appendLog(`TX error: ${err.message || err}`);
+      }
+    });
+
+    document.querySelectorAll("[data-cmd]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          const value = btn.type === "checkbox" ? btn.checked
+            : (btn.tagName === "SELECT" || btn.type === "range") ? parseValue(btn.value)
+            : parseValue(btn.getAttribute("data-value"));
+          await sendJson({
+            cmd: btn.getAttribute("data-cmd"),
+            value
+          });
+          window.setTimeout(() => {
+            requestStatus().catch(() => {});
+          }, 120);
+        } catch (err) {
+          appendLog(`TX error: ${err.message || err}`);
+        }
+      });
+    });
+
+    sendRawBtn.addEventListener("click", async () => {
+      try {
+        const parsed = JSON.parse(rawInput.value);
+        await sendJson(parsed);
+      } catch (err) {
+        appendLog(`JSON/TX error: ${err.message || err}`);
+      }
+    });
+
+    clearLogBtn.addEventListener("click", () => {
+      logEl.textContent = "";
+    });
+
+    setConnectedUi(false);
+  </script>
+</body>
+</html>

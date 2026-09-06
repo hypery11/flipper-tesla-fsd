@@ -173,6 +173,19 @@
 #define SIG_GEAR_LEVER_COUNTER_BYTE         1
 #define SIG_GEAR_LEVER_COUNTER_MASK      0x0Fu
 
+// DI_systemStatus (0x118), little-endian:
+// DI_gear: bit21|3 (accepted/current gear, not a shift request).
+// DI_accelPedalPos: bit32|8, 0.4% per bit, 0xFF=SNA.
+#define SIG_DI_GEAR_BYTE                     2
+#define SIG_DI_GEAR_SHIFT                    5
+#define SIG_DI_GEAR_MASK                  0x07u
+#define SIG_DI_GEAR_PARK                     1u
+#define SIG_DI_GEAR_REVERSE                  2u
+#define SIG_DI_GEAR_NEUTRAL                  3u
+#define SIG_DI_GEAR_DRIVE                    4u
+#define SIG_DI_ACCEL_PEDAL_BYTE              4
+#define SIG_DI_ACCEL_PEDAL_SNA            0xFFu
+
 // VCFRONT_lighting (0x3F5), little-endian:
 //   indicatorLeftRequest: bit0|2, indicatorRightRequest: bit2|2.
 //   0=off, 1=active low, 2=active high.

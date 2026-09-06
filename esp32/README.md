@@ -340,6 +340,37 @@ pio device monitor -b 115200
 5. REST API available at `http://192.168.4.1/api/status`
 6. Raw CAN stream endpoint: `http://192.168.4.1:82/stream`
 
+### Web Serial fallback control (external page)
+
+If WiFi is unavailable, or you prefer an external browser UI over USB, use the
+Web Serial control page:
+
+1. Connect ESP32 by USB.
+2. From `esp32/`, start a local web server:
+   ```bash
+   python3 -m http.server 8080
+   ```
+3. Open `http://localhost:8080/webserial-control.html` in Chrome/Edge.
+4. Click **Connect**, select the ESP32 serial port, then send quick commands or raw JSON.
+
+Serial JSON command format (one line per command):
+
+```json
+{"cmd":"status","value":true}
+{"cmd":"mode","value":true}
+{"cmd":"nag","value":true}
+{"cmd":"ap_first","value":false}
+{"cmd":"gear","value":"down"}
+{"cmd":"gear","value":"up"}
+```
+
+Device ack format:
+
+```json
+{"ok":true}
+{"ok":false,"error":"dashboard_not_ready"}
+```
+
 ### Capture fidelity — the two drop metrics
 
 A downloaded capture is only useful if you know whether it saw every frame. The

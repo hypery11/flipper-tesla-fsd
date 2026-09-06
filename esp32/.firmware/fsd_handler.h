@@ -141,6 +141,22 @@ void fsd_handle_epas_status(FSDState *state, const CanFrame *frame);
 /** Parse ESP_status (0x145) brake pedal state. */
 void fsd_handle_esp_status(FSDState *state, const CanFrame *frame);
 
+/** Parse DI_torque (0x108) drive motor torque. */
+void fsd_handle_di_torque(FSDState *state, const CanFrame *frame);
+
+#define DI_PEDAL_PRESS_RAW           3u
+#define DI_PEDAL_RELEASE_RAW         1u
+#define DI_PEDAL_DEBOUNCE_FRAMES     3u
+
+/** True once DI_accelPedalPos is available and indicates pedal demand. */
+bool fsd_accelerator_pressed(const FSDState *state);
+
+/** Effective (possibly temporary) chime suppression state. */
+bool fsd_speed_chime_suppression_active(const FSDState *state);
+
+/** Parse DI_speed (0x257) vehicle and UI speed. */
+void fsd_handle_di_speed(FSDState *state, const CanFrame *frame);
+
 /** Parse BMS_hvBusStatus (0x132) — updates pack_voltage_v / pack_current_a. */
 void fsd_handle_bms_hv(FSDState *state, const CanFrame *frame);
 
@@ -171,6 +187,9 @@ void fsd_handle_das_handsonly_399(FSDState *state, const CanFrame *frame);
 
 /** Parse GearLever / right stalk 0x229 for right-stalk detents. */
 void fsd_handle_gear_lever(FSDState *state, const CanFrame *frame, uint32_t now_ms);
+
+/** Parse accepted gear and accelerator position from DI_systemStatus (0x118). */
+void fsd_handle_di_system(FSDState *state, const CanFrame *frame);
 
 /** Parse UI_driverAssistMapData 0x238 map/location speed limit. */
 void fsd_handle_ui_map_data(FSDState *state, const CanFrame *frame, uint32_t now_ms);

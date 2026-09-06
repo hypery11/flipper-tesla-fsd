@@ -18,6 +18,10 @@ void fsd_state_init(FSDState* state, TeslaHWVersion hw) {
     state->das_prev_hands_on_state = 0xFF; // escalation-edge baseline (#100)
     state->enhanced_autopilot = false;
     state->summon_unlock = false;   // opt-in Summon EU Unlock, default OFF
+    state->summon_auto_control = SummonAutoControl_AcceleratorTemporary;
+    state->summon_temp_disabled = false;
+    state->summon_temp_recovery_armed = false;
+    state->summon_temp_disabled_ms = 0;
     state->apmv3_branch = 0xFF;     // opt-in AP branch/tier selector, default OFF (0xFF sentinel)
     state->continue_on_green = false; // opt-in Continue on Green, default OFF
     state->assist_rhd_override = false; // opt-in RHD driving-side override, default OFF

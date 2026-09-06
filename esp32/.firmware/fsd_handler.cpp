@@ -47,6 +47,10 @@ void fsd_state_init(FSDState *state, TeslaHWVersion hw) {
     state->ignore_ota           = false;
     state->emergency_vehicle_detect = false;
     state->summon_unlock        = false;    // opt-in Summon EU Unlock, default OFF
+    state->summon_auto_control  = SummonAutoControl_AcceleratorTemporary;
+    state->summon_temp_disabled = false;
+    state->summon_temp_recovery_armed = false;
+    state->summon_temp_disabled_ms = 0;
     state->apmv3_branch         = 0xFF;      // opt-in AP branch/tier selector, default OFF (0xFF sentinel)
     state->assist_tlssc_bit38   = false;    // opt-in TLSSC bit38 explicit enable, default OFF
     state->continue_on_green    = false;    // opt-in Continue on Green, default OFF
@@ -280,6 +284,7 @@ bool fsd_handle_autopilot_frame(FSDState *state, CanFrame *frame) {
     uint8_t mux     = read_mux_id(frame);
     bool    fsd_ui  = is_fsd_selected(frame, state->force_fsd, state->china_mode);
     bool    modified = false;
+    bool    summon_active = state->summon_unlock && !state->summon_temp_disabled;
 
     // mux 0 is the authoritative "is FSD requested" mux
     if (mux == CAN_MUX_0) state->fsd_enabled = fsd_ui;
@@ -320,7 +325,7 @@ bool fsd_handle_autopilot_frame(FSDState *state, CanFrame *frame) {
             modified = true;
         }
         if (mux == CAN_MUX_1 &&
-            (state->nag_killer || state->summon_unlock || state->assist_telemetry_off ||
+            (state->nag_killer || summon_active || state->assist_telemetry_off ||
              state->apmv3_branch <= 5)) {
             if (state->nag_killer) {
                 // Nag suppression via bit 19 (clear = no hands-on-wheel request)
@@ -328,7 +333,7 @@ bool fsd_handle_autopilot_frame(FSDState *state, CanFrame *frame) {
                 state->nag_suppressed = true;
                 modified = true;
             }
-            if (state->summon_unlock) {
+            if (summon_active) {
                 set_bit(frame, SIG_AP_NAG_CLEAR_BIT, false);       // bit19 EU restriction clear
                 set_bit(frame, SIG_AP_HW4_NAG_CONFIRM_BIT, true);  // bit47 summon enable
                 modified = true;
@@ -371,7 +376,7 @@ bool fsd_handle_autopilot_frame(FSDState *state, CanFrame *frame) {
             modified = true;
         }
         if (mux == CAN_MUX_1 &&
-            (state->nag_killer || state->summon_unlock || state->assist_telemetry_off ||
+            (state->nag_killer || summon_active || state->assist_telemetry_off ||
              state->apmv3_branch <= 5)) {
             if (state->nag_killer) {
                 set_bit(frame, SIG_AP_NAG_CLEAR_BIT, false);      // clear hands-on-wheel nag
@@ -379,7 +384,7 @@ bool fsd_handle_autopilot_frame(FSDState *state, CanFrame *frame) {
                 state->nag_suppressed = true;
                 modified = true;
             }
-            if (state->summon_unlock) {
+            if (summon_active) {
                 set_bit(frame, SIG_AP_NAG_CLEAR_BIT, false);       // bit19 EU restriction clear
                 set_bit(frame, SIG_AP_HW4_NAG_CONFIRM_BIT, true);  // bit47 summon enable
                 modified = true;
@@ -796,6 +801,38 @@ void fsd_handle_esp_status(FSDState *state, const CanFrame *frame) {
     state->brake_status_seen = true;
 }
 
+void fsd_handle_di_torque(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc < 5) return;
+    uint16_t raw = ((uint16_t)frame->data[3] >> 3) |
+                   ((uint16_t)frame->data[4] << 5);
+    int16_t signed_raw = (raw & 0x1000u) ? (int16_t)(raw | 0xE000u) : (int16_t)raw;
+    if (signed_raw == -4096) return;
+    state->di_torque_nm = (float)signed_raw * 2.0f;
+    state->di_torque_seen = true;
+}
+
+bool fsd_accelerator_pressed(const FSDState *state) {
+    return state->accelerator_pedal_seen && state->accelerator_pressed;
+}
+
+bool fsd_speed_chime_suppression_active(const FSDState *state) {
+    if (state->summon_unlock &&
+        state->summon_auto_control == SummonAutoControl_AcceleratorTemporary &&
+        state->suppress_speed_chime) {
+        return state->summon_temp_disabled;
+    }
+    return state->suppress_speed_chime;
+}
+
+void fsd_handle_di_speed(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc < 4) return;
+    uint16_t raw = ((uint16_t)frame->data[2] << 4) | (frame->data[1] >> 4);
+    state->vehicle_speed_kph = (float)raw * 0.08f - 40.0f;
+    if (state->vehicle_speed_kph < 0.0f) state->vehicle_speed_kph = 0.0f;
+    state->ui_speed = frame->data[3];
+    state->speed_seen = true;
+}
+
 // ── BMS read-only parsers ─────────────────────────────────────────────────────
 
 void fsd_handle_bms_hv(FSDState *state, const CanFrame *frame) {
@@ -1019,6 +1056,38 @@ void fsd_handle_gear_lever(FSDState *state, const CanFrame *frame, uint32_t now_
         best_pos = gear_stronger_pos(best_pos, pos);
     }
     last_seen_ms = now_ms;
+}
+
+void fsd_handle_di_system(FSDState *state, const CanFrame *frame) {
+    if (frame->dlc <= SIG_DI_GEAR_BYTE) return;
+    state->vehicle_gear =
+        (frame->data[SIG_DI_GEAR_BYTE] >> SIG_DI_GEAR_SHIFT) & SIG_DI_GEAR_MASK;
+    state->vehicle_gear_seen = true;
+
+    if (frame->dlc <= SIG_DI_ACCEL_PEDAL_BYTE) return;
+    uint8_t pedal_raw = frame->data[SIG_DI_ACCEL_PEDAL_BYTE];
+    if (pedal_raw == SIG_DI_ACCEL_PEDAL_SNA) return;
+
+    state->accelerator_pedal_percent = (float)pedal_raw * 0.4f;
+    state->accelerator_pedal_seen = true;
+    if (pedal_raw >= DI_PEDAL_PRESS_RAW) {
+        state->accelerator_release_count = 0;
+        if (!state->accelerator_pressed &&
+            ++state->accelerator_press_count >= DI_PEDAL_DEBOUNCE_FRAMES) {
+            state->accelerator_pressed = true;
+            state->accelerator_press_count = 0;
+        }
+    } else if (pedal_raw <= DI_PEDAL_RELEASE_RAW) {
+        state->accelerator_press_count = 0;
+        if (state->accelerator_pressed &&
+            ++state->accelerator_release_count >= DI_PEDAL_DEBOUNCE_FRAMES) {
+            state->accelerator_pressed = false;
+            state->accelerator_release_count = 0;
+        }
+    } else {
+        state->accelerator_press_count = 0;
+        state->accelerator_release_count = 0;
+    }
 }
 
 void fsd_handle_ui_map_data(FSDState *state, const CanFrame *frame, uint32_t now_ms) {

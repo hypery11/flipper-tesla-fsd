@@ -2,6 +2,8 @@
 
 // ── CAN IDs ───────────────────────────────────────────────────────────────────
 #define CAN_ID_STW_ACTN_RQ    0x045u  // 69   - STW_ACTN_RQ:  steering stalk (Legacy follow distance)
+#define CAN_ID_DI_TORQUE      0x108u  // 264  - DI_torque: drive motor torque telemetry
+#define CAN_ID_DI_SYSTEM      0x118u  // 280  - DI_systemStatus: gear / accelerator pedal
 #define CAN_ID_TRIP_PLANNING  0x082u  // 130  - UI_tripPlanning: precondition trigger
 #define CAN_ID_ESP_STATUS     0x145u  // 325  - ESP_status: driver brake pedal state
 #define CAN_ID_STEER_ANGLE    0x129u  // 297  - SCCM_steeringAngleSensor (Soft Engage gate, #108)
@@ -10,6 +12,7 @@
 #define CAN_ID_BMS_THERMAL    0x312u  // 786  - BMS_thermalStatus: battery temp
 #define CAN_ID_GTW_CAR_STATE  0x318u  // 792  - GTW_carState:    OTA detection
 #define CAN_ID_UI_MAP_DATA    0x238u  // 568  - UI_driverAssistMapData: map speed limit
+#define CAN_ID_DI_SPEED       0x257u  // 599  - DI_speed: vehicle speed / UI speed
 #define CAN_ID_SCCM_RSTALK    0x229u  // 553  - GearLever / right stalk
 #define CAN_ID_DAS_CONTROL    0x2B9u  // 697  - DAS_control: cruise set speed / ACC state
 #define CAN_ID_DAS_STATUS2    0x389u  // 905  - DAS_status2: ACC speed limit
