@@ -17,7 +17,6 @@
 #include "profile_match.h"
 #include "prefs.h"
 #include "ota_verify.h"
-#include "web_i18n.h"
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 #include <WiFi.h>
@@ -1530,7 +1529,7 @@ function conn(){
 conn();
 </script>
 )rawliteral"
-WEB_I18N_HTML
+#include "web_i18n.inc"
 R"rawliteral(
 </body>
 </html>
