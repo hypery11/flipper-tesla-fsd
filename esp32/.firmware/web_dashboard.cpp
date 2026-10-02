@@ -1528,6 +1528,9 @@ function conn(){
 }
 conn();
 </script>
+)rawliteral"
+#include "web_i18n.inc"
+R"rawliteral(
 </body>
 </html>
 )rawliteral";
