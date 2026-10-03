@@ -71,6 +71,14 @@ public:
      *  on software filtering, which decimates a single id on a busy bus. */
     virtual void setAcceptanceFilter(bool single, uint32_t id) { (void)single; (void)id; }
 
+    /** Restrict hardware reception to a small exact-id whitelist, or restore
+     *  accept-all when count is zero. Drivers with limited hardware support may
+     *  only apply single-id lists and otherwise fall back to accept-all. */
+    virtual void setAcceptanceFilters(const uint32_t *ids, uint8_t count) {
+        if (count == 1 && ids) setAcceptanceFilter(true, ids[0]);
+        else setAcceptanceFilter(false, 0);
+    }
+
     /** Whether the underlying CAN hardware was detected on the bus/SPI.
      *  TWAI lives inside the SoC and is therefore always present.
      *  MCP2515 returns true once the chip has answered an SPI probe. */

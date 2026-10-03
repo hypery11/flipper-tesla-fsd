@@ -18,6 +18,7 @@
 #define CAN_ID_DAS_STATUS2    0x389u  // 905  - DAS_status2: ACC speed limit
 #define CAN_ID_EPAS_STATUS    0x370u  // 880  - EPAS3P_sysStatus: nag killer target
 #define CAN_ID_GTW_CAR_CONFIG 0x398u  // 920  - GTW_carConfig:   HW version detection
+#define CAN_ID_VCLEFT_SWITCH  0x3C2u  // 962  - VCLEFT_switchStatus: steering wheel controls
 #define CAN_ID_VCFRONT_LIGHT  0x3F5u  // 1013 - VCFRONT_lighting: turn signal request state
 #define CAN_ID_AP_LEGACY      0x3EEu  // 1006 - DAS_autopilot:   Legacy / HW1 / HW2
 #define CAN_ID_FOLLOW_DIST    0x3F8u  // 1016 - DAS_followDistance: speed profile source
@@ -119,6 +120,21 @@
 #endif
 #endif
 
+// T-2CAN can1 receive whitelist. This is applied only in Active mode and only
+// on BOARD_LILYGO_T2CAN, so Listen-Only logging remains accept-all.
+#ifndef CAN1_REPO_FILTER_ENABLED
+#define CAN1_REPO_FILTER_ENABLED 1
+#endif
+#ifndef CAN1_REPO_FILTER_IDS
+#define CAN1_REPO_FILTER_IDS \
+    CAN_ID_SCCM_RSTALK,      \
+    CAN_ID_VCLEFT_SWITCH,    \
+    CAN_ID_VCFRONT_LIGHT,    \
+    CAN_ID_BMS_HV_BUS,       \
+    CAN_ID_BMS_SOC,          \
+    CAN_ID_BMS_THERMAL
+#endif
+
 // MCP2515 oscillator. Generic breakout modules often use 8 MHz; the LilyGO
 // T-2CAN onboard MCP2515 follows the autowp library's 16 MHz default.
 #ifndef MCP_CRYSTAL_MHZ
@@ -145,6 +161,9 @@
 #endif
 #ifndef GEAR_SEQUENCE_TIMEOUT_MS
 #define GEAR_SEQUENCE_TIMEOUT_MS 1500u  // Give up if a generated 0x229 sequence cannot start/finish
+#endif
+#ifndef VCLEFT_SWITCH_CACHED_FRAME_MAX_AGE_MS
+#define VCLEFT_SWITCH_CACHED_FRAME_MAX_AGE_MS 150u  // Immediate 0x3C2 TX only if latest wheel frame is fresh
 #endif
 #define CONT_AP_READY_WAIT_TIMEOUT_MS    6000u
 #define CONT_AP_REENGAGE_DELAY_MS        1000u

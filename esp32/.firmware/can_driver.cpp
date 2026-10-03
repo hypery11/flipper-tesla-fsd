@@ -31,8 +31,8 @@ class TwaiDriver : public CanDriver {
     bool     installed_   = false;
     uint32_t tx_count_    = 0;
     uint32_t rx_count_    = 0;
-    bool     filter_single_ = false;  // accept only filter_id_ when true
-    uint32_t filter_id_     = 0;      // standard 11-bit id for single-id capture
+    uint8_t  filter_count_ = 0;
+    uint32_t filter_ids_[6] = {};
     bool     recovering_    = false;  // true while a bus-off recovery is in flight
     bool     busoff_event_  = false;  // consume-on-read edge: recovery just started
     uint32_t rx_rejected_   = 0;      // DLC>8 frames dropped
@@ -55,12 +55,24 @@ class TwaiDriver : public CanDriver {
 
         twai_timing_config_t t = TWAI_TIMING_CONFIG_500KBITS();
         twai_filter_config_t f;
-        if (filter_single_) {
-            // Standard-frame single filter: match exactly filter_id_. The id
-            // sits in bits [31:21] of the acceptance code; mask bits set to 1
-            // are "don't care", so we clear only the 11 id bits.
-            f.acceptance_code = (filter_id_ & 0x7FFu) << 21;
-            f.acceptance_mask = ~(((uint32_t)0x7FFu) << 21);
+        if (filter_count_ > 0) {
+            // Standard-frame hardware prefilter. TWAI has one acceptance
+            // code/mask, so an exact whitelist is only possible for one ID.
+            // For multiple IDs, match the common ID bits and leave differing
+            // bits as don't-care; software filtering still enforces the final
+            // list, while hardware drops part of unrelated traffic.
+            uint32_t common_ones = filter_ids_[0] & 0x7FFu;
+            uint32_t common_zeros = (~filter_ids_[0]) & 0x7FFu;
+            for (uint8_t i = 1; i < filter_count_; i++) {
+                uint32_t id = filter_ids_[i] & 0x7FFu;
+                common_ones &= id;
+                common_zeros &= (~id) & 0x7FFu;
+            }
+            uint32_t fixed_bits = (common_ones | common_zeros) & 0x7FFu;
+            uint32_t code_id = common_ones & fixed_bits;
+            uint32_t mask_id = (~fixed_bits) & 0x7FFu;
+            f.acceptance_code = code_id << 21;
+            f.acceptance_mask = (mask_id << 21) | 0x001FFFFFu;
             f.single_filter   = true;
         } else {
             f = TWAI_FILTER_CONFIG_ACCEPT_ALL();
@@ -210,17 +222,32 @@ public:
     }
 
     void setAcceptanceFilter(bool single, uint32_t id) override {
-        if (filter_single_ == single && (!single || filter_id_ == id)) return;
-        filter_single_ = single;
-        filter_id_     = id;
+        if (single) setAcceptanceFilters(&id, 1);
+        else setAcceptanceFilters(nullptr, 0);
+    }
+
+    void setAcceptanceFilters(const uint32_t *ids, uint8_t count) override {
+        if (ids == nullptr) count = 0;
+        if (count > 6) count = 6;
+
+        bool same = filter_count_ == count;
+        for (uint8_t i = 0; same && i < count; i++) {
+            same = ((filter_ids_[i] & 0x7FFu) == (ids[i] & 0x7FFu));
+        }
+        if (same) return;
+
+        filter_count_ = count;
+        for (uint8_t i = 0; i < count; i++) {
+            filter_ids_[i] = ids[i] & 0x7FFu;
+        }
         if (!installed_) return;  // begin() will pick up the new filter
         bool lo = listen_only_;
         stop_and_uninstall();
         if (!install_and_start(lo)) {
             Serial.printf("[CAN] %s TWAI filter switch FAILED\n", label_);
-        } else if (single) {
-            Serial.printf("[CAN] %s TWAI hardware filter -> 0x%03lX only (full-rate capture)\n",
-                          label_, (unsigned long)(id & 0x7FFu));
+        } else if (count > 0) {
+            Serial.printf("[CAN] %s TWAI hardware filter -> %u id prefilter\n",
+                          label_, (unsigned)count);
         } else {
             Serial.printf("[CAN] %s TWAI hardware filter -> accept all\n", label_);
         }
@@ -438,13 +465,18 @@ public:
     }
 
     void setAcceptanceFilter(bool single, uint32_t id) override {
+        if (single) {
+            setAcceptanceFilters(&id, 1);
+            return;
+        }
         if (!installed_) return;
         // Both receive buffers: set the mask so all 11 id bits must match
         // (0x7FF) for single-id capture, or 0x000 (don't-care = accept all) to
         // restore. Point every filter at the wanted id. setFilter* enter CONFIG
         // mode internally, so the run mode is re-applied afterwards.
-        uint32_t mask = single ? 0x7FFu : 0x000u;
-        uint32_t fid  = single ? (id & 0x7FFu) : 0x000u;
+        (void)id;
+        uint32_t mask = 0x000u;
+        uint32_t fid  = 0x000u;
         bool ok = true;
         ok &= (mcp_.setFilterMask(MCP2515::MASK0, false, mask) == MCP2515::ERROR_OK);
         ok &= (mcp_.setFilterMask(MCP2515::MASK1, false, mask) == MCP2515::ERROR_OK);
@@ -458,9 +490,6 @@ public:
         ok &= (merr == MCP2515::ERROR_OK);
         if (!ok) {
             Serial.printf("[CAN] %s MCP2515 filter switch FAILED\n", label_);
-        } else if (single) {
-            Serial.printf("[CAN] %s MCP2515 hardware filter -> 0x%03lX only (full-rate capture)\n",
-                          label_, (unsigned long)fid);
         } else {
             Serial.printf("[CAN] %s MCP2515 hardware filter -> accept all\n", label_);
         }
@@ -474,6 +503,37 @@ public:
         if (!chip_detected_) return;  // nothing answering on SPI
         if (mcp_.setConfigMode() != MCP2515::ERROR_OK) mcp_.reset();
         installed_ = false;
+    }
+
+    void setAcceptanceFilters(const uint32_t *ids, uint8_t count) override {
+        if (!installed_) return;
+        if (ids == nullptr || count == 0) {
+            setAcceptanceFilter(false, 0);
+            return;
+        }
+        if (count > 6) count = 6;
+
+        // MCP2515 has six standard-ID filters. Use exact-match masks on both
+        // RX buffers and repeat the first id into unused filters so the
+        // whitelist never accidentally accepts id 0x000.
+        bool ok = true;
+        ok &= (mcp_.setFilterMask(MCP2515::MASK0, false, 0x7FFu) == MCP2515::ERROR_OK);
+        ok &= (mcp_.setFilterMask(MCP2515::MASK1, false, 0x7FFu) == MCP2515::ERROR_OK);
+        const MCP2515::RXF rxf[6] = {MCP2515::RXF0, MCP2515::RXF1, MCP2515::RXF2,
+                                     MCP2515::RXF3, MCP2515::RXF4, MCP2515::RXF5};
+        for (uint8_t i = 0; i < 6; i++) {
+            uint32_t fid = ids[(i < count) ? i : 0] & 0x7FFu;
+            ok &= (mcp_.setFilter(rxf[i], false, fid) == MCP2515::ERROR_OK);
+        }
+
+        MCP2515::ERROR merr = listen_only_ ? mcp_.setListenOnlyMode() : mcp_.setNormalMode();
+        ok &= (merr == MCP2515::ERROR_OK);
+        if (!ok) {
+            Serial.printf("[CAN] %s MCP2515 filter whitelist FAILED\n", label_);
+        } else {
+            Serial.printf("[CAN] %s MCP2515 hardware filter -> %u exact ids\n",
+                          label_, (unsigned)count);
+        }
     }
 };
 #endif

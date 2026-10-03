@@ -4,6 +4,7 @@ dist/
 .DS_Store
 .idea
 .tmp
+.local
 
 # Python tooling cache
 __pycache__/

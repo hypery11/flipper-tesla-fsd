@@ -475,6 +475,18 @@ bool http_can_stream_single_filter(uint32_t *id_out) {
     return true;
 }
 
+bool http_can_stream_filter_snapshot(uint32_t *ids_out,
+                                     uint8_t ids_max,
+                                     uint8_t *count_out) {
+    if (!g_enabled || !g_active || !g_client.connected()) return false;
+    if (count_out) *count_out = g_filter_count;
+    if (ids_out && ids_max > 0) {
+        uint8_t n = g_filter_count < ids_max ? g_filter_count : ids_max;
+        for (uint8_t i = 0; i < n; i++) ids_out[i] = g_filter_ids[i];
+    }
+    return true;
+}
+
 bool http_can_stream_bus_filter(CanBusId *bus_out) {
     if (!g_enabled || !g_active || !g_client.connected()) return false;
     if (!g_bus_filter_enabled) return false;

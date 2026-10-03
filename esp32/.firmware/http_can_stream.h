@@ -22,6 +22,9 @@ bool     http_can_stream_active();
  *  caller can install a hardware acceptance filter for full-rate single-ID
  *  capture. Returns false (and leaves *id_out untouched) otherwise. */
 bool     http_can_stream_single_filter(uint32_t *id_out);
+bool     http_can_stream_filter_snapshot(uint32_t *ids_out,
+                                         uint8_t ids_max,
+                                         uint8_t *count_out);
 
 /** When a stream is active with a ?bus=can0/can1 filter, report the selected
  *  bus so the caller can scope hardware filtering to that CAN controller. */
