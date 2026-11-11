@@ -1,7 +1,7 @@
 [English](README.md) | [繁體中文](README_zh-TW.md) | [简体中文](README_zh-CN.md)
 
 > [!WARNING]
-> **本翻译与英文版同步维护。** 功能规格、CAN ID 报文映射表、硬件引脚接线指南等均严格对照 [英文版 README](README.md)。如发现任何表述差异或最新改动，欢迎提交 PR 完善。
+> **本翻译可能落后于英文版。** 功能描述、CAN ID 报文映射表、硬件引脚接线指南等以 [英文版 README](README.md) 为准。如果你发现翻译与英文版不一致，欢迎提交 PR 修正。
 
 # Tesla Mod for Flipper Zero
 
