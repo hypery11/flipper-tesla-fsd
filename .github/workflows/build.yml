@@ -127,6 +127,9 @@ jobs:
           # Self-contained browser flasher — download it and open in Chrome/Edge
           # to flash without hosting anything.
           cp docs/install/index.html release/tesla-flasher.html
+          # From disk there is no Pages hostname to auto-detect, so point the
+          # downloaded copy at this repo's own Pages firmware directory.
+          sed -i "s|var REPO = 'hypery11/flipper-tesla-fsd';|var REPO = '${GITHUB_REPOSITORY}';|" release/tesla-flasher.html
           ls -la release
       - name: Upload to release
         env:

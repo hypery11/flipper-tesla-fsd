@@ -59,6 +59,7 @@
 ### TLSSC Restore（v2.10+）
 - 在 **VIN 被封禁** 的車輛上恢復交通號誌與停車標誌控制
 - 對 CAN ID `0x331` 做讀取-修改-重發 — 將 `DAS_autopilot` 設為 SELF_DRIVING
+- **ESP32 防重啟重播：** 將修改後的 8 位元組 frame 與來源匯流排儲存到 NVS，在開機或重新啟用後以 10 Hz 重播最多 60 秒（最多 600 幀）。每收到一幀原始 `0x331` 後讓出 2 秒，只在快取的匯流排上傳送，並遵守 Active/Service 的 TX 門控。此設計用於避免 MCU 重啟競態，但尚未經實車驗證。Flipper 實作不變，仍可能觸發重啟
 - 已在 Palladium（Model S Plaid 2023）、HW4 Highland（Model 3 Performance 2024）與 Intel HW3（需 AP-first 變通）上確認可用
 - 不會恢復完整 FSD 視覺化 — 只恢復 TLSSC（停車標誌／交通號誌）
 - **建議的封禁車組合**：同時啟用 **TLSSC Restore** + **TLSSC bit38**（`0x3FD` mux 0 bit 38）— @RoyRakete 在 HW3 / 2026.2.6 上確認可靠（[#18](https://github.com/hypery11/flipper-tesla-fsd/issues/18#issuecomment-4413430516)）。在某些封禁韌體上，單獨開任一個都不穩定；兩者搭配才能重新啟用 AP/TACC 接管
@@ -124,7 +125,7 @@
 | **Nag Killer** | DAS 感知的 EPAS counter+1 回應，帶擬真扭力變化。 |
 | **Force FSD** | 繞過 `isFSDSelectedInUI` 檢查。不會繞過 Tesla 伺服器端授權 — 只影響本地 CAN frame 流。 |
 | **Ignore OTA** | 即使 `0x318` 回報 Tesla OTA 更新進行中，也允許在 Active 模式下 CAN TX。預設關閉。 |
-| **TLSSC Restore** | 0x331 DAS 設定偽造，在被封禁的車上恢復 TLSSC。會觸發 MCU 重開機。 |
+| **TLSSC Restore** | 0x331 DAS 設定偽造，在被封禁的車上恢復 TLSSC。Flipper 仍可能觸發 MCU 重啟；ESP32 增加了有界的 NVS 快取/重播以避免該問題（尚待實車驗證）。 |
 | **AP-First (14.x)** | 延後 0x3FD 注入直到 AP 接管。Tesla 韌體 2026.14.x 需要此項。 |
 | **GTW Config Replay** | 當閘道器發出被修改的 frame 時，重播先前學到的健康 `GTW_carConfig`（0x7FF）廣播。只在 CAN 廣播層做遮罩 — 不會還原 NVRAM 或後端封禁旗標，也不能預防封禁。v2.15 從「Ban Shield」改名（[#60](https://github.com/hypery11/flipper-tesla-fsd/issues/60)、[#67](https://github.com/hypery11/flipper-tesla-fsd/issues/67)）。 |
 | **Suppress Chime** | 消掉 ISA 限速警告提示音（僅 HW4，`0x399`）。在 ESP32 上只在偵測到 HW4 後生效；Legacy/HW3 把 `0x399` 當 DAS 狀態用。 |

@@ -13,6 +13,29 @@ bool prefs_namespace_exists(const char *ns) {
     return true;
 }
 
+bool prefs_load_tlssc_cache(uint8_t *bus, uint8_t *data, size_t len) {
+    if (!bus || !data || !prefs_namespace_exists(NS)) return false;
+    Preferences prefs;
+    if (!prefs.begin(NS, /*readOnly=*/true)) return false;
+    uint8_t saved_bus = prefs.getUChar("tlsscBus", 0xFF);
+    size_t saved_len = prefs.getBytesLength("tlsscFrame");
+    size_t copied = saved_len == len ? prefs.getBytes("tlsscFrame", data, len) : 0;
+    prefs.end();
+    if (saved_bus >= 2u || copied != len) return false;
+    *bus = saved_bus;
+    return true;
+}
+
+bool prefs_save_tlssc_cache(uint8_t bus, const uint8_t *data, size_t len) {
+    if (bus >= 2u || !data || !len) return false;
+    Preferences prefs;
+    if (!prefs.begin(NS, /*readOnly=*/false)) return false;
+    size_t copied = prefs.putBytes("tlsscFrame", data, len);
+    size_t saved_bus = prefs.putUChar("tlsscBus", bus);
+    prefs.end();
+    return copied == len && saved_bus == 1u;
+}
+
 void prefs_load(FSDState *state) {
     if (prefs_namespace_exists(NS)) g_prefs.begin(NS, /*readOnly=*/true);
     if (!g_prefs.isKey("ok")) {

@@ -39,6 +39,7 @@
 #include "../../fsd_logic/fsd_freshness.h" // fsd_tx_fresh — stale-frame TX gate (#176)
 #include "../../fsd_logic/fsd_rx_whitelist.h" // RX ID whitelist (performance) derivation
 #include "prefs.h"
+#include "tlssc_norestart.h"
 #include "ota_verify.h"
 #include "power_log.h"
 #include "loop_health.h"
@@ -70,6 +71,8 @@ static uint32_t   g_can_last_retry_ms[CAN_ACTIVE_BUS_COUNT] = {}; // periodic re
 #define CAN_REINIT_INTERVAL_MS  30000u
 static FSDState   g_state = {};
 static portMUX_TYPE g_state_mux = portMUX_INITIALIZER_UNLOCKED;
+static TlsscNrRuntime g_tlssc_nr = {};
+static bool g_tlssc_nr_was_enabled = false;
 
 static CanBusId bus_id_from_index(uint8_t index) {
     return index == 1 ? CAN_BUS_SECONDARY : CAN_BUS_PRIMARY;
@@ -264,6 +267,47 @@ static bool send_generated_frame(CanBusId bus, const CanFrame &frame) {
 
 static bool send_modified_frame(CanBusId bus, const CanFrame &frame) {
     return send_on_bus(bus, frame);
+}
+
+static void tlssc_nr_init_from_prefs() {
+    TlsscNrCache cache = {};
+    if (!prefs_load_tlssc_cache(&cache.bus, cache.data, sizeof(cache.data))) return;
+    cache.len = TLSSC_NR_FRAME_LEN;
+    tlssc_nr_load(&g_tlssc_nr, cache);
+    if (g_tlssc_nr.cache_valid) {
+        Serial.printf("TLSSC no-restart: cached 0x331 from CAN%d\n", cache.bus + 1);
+    }
+}
+
+static NOINLINE void tlssc_nr_tick(uint32_t now) {
+    state_enter();
+    bool enabled = g_state.tlssc_restore;
+    bool tx_allowed = fsd_can_transmit(&g_state);
+    state_exit();
+    if (enabled && !g_tlssc_nr_was_enabled) {
+        tlssc_nr_rearm(&g_tlssc_nr, now);
+    }
+    g_tlssc_nr_was_enabled = enabled;
+    if (!enabled || !tx_allowed) return;
+
+    uint8_t bus = g_tlssc_nr.cache.bus;
+    if (bus >= CAN_ACTIVE_BUS_COUNT || !g_can_ok[bus]) return;
+    if (!tlssc_nr_due(&g_tlssc_nr, bus, g_can_ok[bus], true, now)) return;
+
+    state_enter();
+    tx_allowed = fsd_can_transmit(&g_state);
+    state_exit();
+    if (!tx_allowed) return;
+
+    CanFrame frame = {};
+    frame.id = CAN_ID_DAS_AP_CONFIG;
+    frame.dlc = TLSSC_NR_FRAME_LEN;
+    tlssc_nr_copy_payload(&g_tlssc_nr, frame.data);
+    bool sent = send_on_bus(bus_id_from_index(bus), frame);
+    tlssc_nr_record_result(&g_tlssc_nr, sent, now);
+    if (sent && g_tlssc_nr.replay_ok == 1u) {
+        Serial.println("TLSSC no-restart: replaying cached 0x331 for 60s");
+    }
 }
 
 // Last 0x229 counter per bus. A press goes out only on a bus fresh here.
@@ -1771,13 +1815,26 @@ static NOINLINE void process_frame(CanBusId bus, const CanFrame &frame) {
         return;
     }
 
-    // TLSSC Restore (0x331) — DAS config spoof
+    // TLSSC Restore (0x331) — DAS config spoof, plus a bounded cached replay
+    // after reboot so the MCU does not latch the stock config before 0x331 arrives.
     if (frame.id == CAN_ID_DAS_AP_CONFIG) {
         CanFrame f = frame;
         state_enter();
+        bool enabled = g_state.tlssc_restore;
         bool modified = fsd_handle_tlssc_restore(&g_state, &f);
         state_exit();
         if (modified && tx && fresh) send_on_bus(bus, f);
+
+        if (enabled && frame.dlc == TLSSC_NR_FRAME_LEN &&
+            tlssc_nr_observe(&g_tlssc_nr, frame.data, frame.dlc,
+                             bus_index(bus), millis()) &&
+            !g_tlssc_nr.save_attempted) {
+            g_tlssc_nr.save_attempted = true;
+            bool saved = prefs_save_tlssc_cache(g_tlssc_nr.cache.bus,
+                                                g_tlssc_nr.cache.data,
+                                                g_tlssc_nr.cache.len);
+            Serial.printf("TLSSC no-restart: cache %s\n", saved ? "saved" : "save failed");
+        }
         return;
     }
 
@@ -1978,6 +2035,7 @@ void setup() {
     g_state.blackbox_enabled      = BLACKBOX_DEFAULT_ENABLED;  // ON on LittleFS/SD, OFF on volatile RAM (#124)
 
     prefs_load(&g_state);
+    tlssc_nr_init_from_prefs();
     // Read why we rebooted and the 12V-feed record from the last session, print
     // the verdict, and start a fresh session. Its own NVS namespace, so the
     // order against prefs_load() does not matter; this sits here to land near
@@ -2180,6 +2238,7 @@ void loop() {
     }
 
     continuous_ap_tick(now);
+    tlssc_nr_tick(now);
 
     // ── Precondition frame injection ──────────────────────────────────────────
     static uint32_t last_precond_ms = 0;

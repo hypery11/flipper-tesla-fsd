@@ -1,4 +1,6 @@
 #pragma once
+#include <stddef.h>
+#include <stdint.h>
 #include "fsd_handler.h"
 
 /**
@@ -21,6 +23,12 @@ void prefs_save(const FSDState *state);
 
 /** Erase all saved settings from NVS (factory reset). */
 void prefs_clear();
+
+/** Load the last patched 8-byte 0x331 payload and its source bus. */
+bool prefs_load_tlssc_cache(uint8_t *bus, uint8_t *data, size_t len);
+
+/** Save one patched 0x331 payload for the next power cycle. */
+bool prefs_save_tlssc_cache(uint8_t bus, const uint8_t *data, size_t len);
 
 /** Whether NVS has namespace @p ns. A read-only Preferences::begin() on one
  *  that was never written fails with an error log (nvs_open NOT_FOUND), which

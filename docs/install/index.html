@@ -93,8 +93,15 @@
 // default. /firmware/beta/ exists only while a newer test build is out; it is
 // offered as an opt-in link, or preselected with #beta in the address.
 (function () {
+  // On GitHub Pages the host is <owner>.github.io and the first path segment
+  // is the repo, so a fork's hosted copy installs that fork's own release
+  // images. A downloaded copy opened from disk has no hostname to detect;
+  // build.yml's release step rewrites the default below for that copy.
   var REPO = 'hypery11/flipper-tesla-fsd';
-  var FW = 'https://hypery11.github.io/flipper-tesla-fsd/firmware/';
+  var pages = /^([a-z0-9-]+)\.github\.io$/i.exec(location.hostname);
+  var seg = location.pathname.split('/');
+  if (pages && seg[1]) REPO = pages[1] + '/' + seg[1];
+  var FW = 'https://' + REPO.replace('/', '.github.io/') + '/firmware/';
   var note = document.getElementById('relnote');
   var stable = null, beta = null;
 

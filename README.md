@@ -56,6 +56,7 @@
 ### TLSSC Restore (v2.10+)
 - Recover Traffic Light and Stop Sign Control on **VIN-banned** vehicles
 - Read-modify-retransmit on CAN ID `0x331` — sets `DAS_autopilot` to SELF_DRIVING
+- **ESP32 no-reboot replay:** saves the patched 8-byte frame and source bus in NVS, then replays it at 10 Hz for up to 60 seconds after boot or re-enable (600-frame cap). Replay yields for 2 seconds after each stock `0x331`, runs only on the cached bus, and respects Active/Service TX gates. This is intended to prevent the MCU reboot race, but is not yet verified in a vehicle. The Flipper implementation is unchanged and may still trigger a reboot
 - Confirmed working on Palladium (Model S Plaid 2023), HW4 Highland (Model 3 Performance 2024), and Intel HW3 (with AP-first workaround)
 - Does NOT restore full FSD visualization — only TLSSC (stop signs / traffic lights)
 - **Recommended banned-car combination**: enable **TLSSC Restore** + **TLSSC bit38** (`0x3FD` mux 0 bit 38) together — confirmed reliable on HW3 / 2026.2.6 by @RoyRakete ([#18](https://github.com/hypery11/flipper-tesla-fsd/issues/18#issuecomment-4413430516)). Either toggle alone is unreliable on some banned firmware; the pair re-enables AP/TACC engagement
@@ -121,7 +122,7 @@ Most toggles are on both builds. Flipper only: GTW Config Replay, Emerg. Vehicle
 | **Nag Killer** | DAS-aware EPAS counter+1 echo with organic torque variation. |
 | **Force FSD** | Bypass the `isFSDSelectedInUI` check. Does not bypass Tesla's server-side entitlement — only affects local CAN frame flow. |
 | **Ignore OTA** | Allows CAN TX in Active mode even when `0x318` reports a Tesla OTA update in progress. Default is off. |
-| **TLSSC Restore** | 0x331 DAS config spoof to recover TLSSC on banned vehicles. Triggers MCU reboot. |
+| **TLSSC Restore** | 0x331 DAS config spoof to recover TLSSC on banned vehicles. Flipper may trigger an MCU reboot; ESP32 adds bounded NVS cache/replay intended to avoid it (vehicle verification pending). |
 | **AP-First (14.x)** | Delay 0x3FD injection until AP is engaged. Required for Tesla firmware 2026.14.x. |
 | **GTW Config Replay** | Replay learned-healthy `GTW_carConfig` (0x7FF) broadcasts when the gateway emits modified frames. CAN-broadcast-layer mask only — does not undo NVRAM or backend-side ban flags, does not prevent bans. Renamed from "Ban Shield" in v2.15 ([#60](https://github.com/hypery11/flipper-tesla-fsd/issues/60), [#67](https://github.com/hypery11/flipper-tesla-fsd/issues/67)). |
 | **Suppress Chime** | Kill the ISA speed warning chime (HW4 only, `0x399`). On ESP32 this is active only after HW4 detection; Legacy/HW3 use `0x399` as DAS status instead. |

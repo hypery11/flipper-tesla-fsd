@@ -10,6 +10,7 @@
 # test_power_log covers esp32/.firmware/power_log.h (reset reason refinement).
 # test_web_page.py covers esp32/gen_web_page.py (the gzip copy of the dashboard).
 # test_page_send covers esp32/.firmware/page_send.h (the page's send budget).
+# test_tlssc_norestart covers the 0x331 cache/replay state machine.
 #
 #   make -C test check
 
@@ -57,12 +58,15 @@ test_power_log: test_power_log.cpp $(ESP32)/power_log.h $(ROOT)/fsd_logic/fsd_po
 test_page_send: test_page_send.cpp $(ESP32)/page_send.h
 	$(CXX) $(CXXFLAGS) -I$(ESP32) test_page_send.cpp -o $@
 
+test_tlssc_norestart: test_tlssc_norestart.cpp $(ESP32)/tlssc_norestart.h
+	$(CXX) $(CXXFLAGS) -I$(ESP32) test_tlssc_norestart.cpp -o $@
+
 # test_rx_whitelist covers fsd_logic/fsd_rx_whitelist.h (the derived RX ID
 # whitelist — the safety gate for the opt-in acceptance-filter mode).
 test_rx_whitelist: test_rx_whitelist.c $(ROOT)/fsd_logic/fsd_rx_whitelist.h $(ROOT)/fsd_logic/fsd_state.h $(ROOT)/fsd_logic/fsd_blackbox_filter.h $(ROOT)/fsd_logic/fsd_types.h $(ROOT)/fsd_logic/fsd_perf.h $(ROOT)/fsd_logic/fsd_tpms.h
 	$(CC) $(CFLAGS) -I$(ROOT)/fsd_logic test_rx_whitelist.c -o $@ -lm
 
-check: test_fsd_core test_esp32_core test_can_capture_filter test_captive_probe test_can_mcp2518fd test_web_cmd test_web_origin test_can_counters test_loop_health test_power_log test_page_send test_rx_whitelist
+check: test_fsd_core test_esp32_core test_can_capture_filter test_captive_probe test_can_mcp2518fd test_web_cmd test_web_origin test_can_counters test_loop_health test_power_log test_page_send test_rx_whitelist test_tlssc_norestart
 	./test_fsd_core
 	./test_esp32_core
 	./test_can_capture_filter
@@ -75,9 +79,10 @@ check: test_fsd_core test_esp32_core test_can_capture_filter test_captive_probe 
 	./test_power_log
 	./test_page_send
 	./test_rx_whitelist
+	./test_tlssc_norestart
 	CXX="$(CXX)" python3 test_web_page.py
 
 clean:
-	rm -rf test_fsd_core test_fsd_core.dSYM test_esp32_core test_esp32_core.dSYM test_can_capture_filter test_can_capture_filter.dSYM test_captive_probe test_captive_probe.dSYM test_can_mcp2518fd test_can_mcp2518fd.dSYM test_web_cmd test_web_cmd.dSYM test_web_origin test_web_origin.dSYM test_can_counters test_can_counters.dSYM test_loop_health test_loop_health.dSYM test_power_log test_power_log.dSYM test_page_send test_page_send.dSYM test_rx_whitelist test_rx_whitelist.dSYM
+	rm -rf test_fsd_core test_fsd_core.dSYM test_esp32_core test_esp32_core.dSYM test_can_capture_filter test_can_capture_filter.dSYM test_captive_probe test_captive_probe.dSYM test_can_mcp2518fd test_can_mcp2518fd.dSYM test_web_cmd test_web_cmd.dSYM test_web_origin test_web_origin.dSYM test_can_counters test_can_counters.dSYM test_loop_health test_loop_health.dSYM test_power_log test_power_log.dSYM test_page_send test_page_send.dSYM test_rx_whitelist test_rx_whitelist.dSYM test_tlssc_norestart test_tlssc_norestart.dSYM
 
 .PHONY: check clean
