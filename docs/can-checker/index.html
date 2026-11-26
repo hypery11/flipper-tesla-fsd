@@ -220,6 +220,8 @@ const DB = {
     decode: d => [["Front oil flow request", sna8(d[3], v => fix(v * 0.06, 2) + " L/min")]] },
   0x5D7: { name: "DI_rearThermalControl", bus: "Vehicle", role: "read only — rear oil flow request", unverified: true,
     decode: d => [["Rear oil flow request", sna8(d[3], v => fix(v * 0.06, 2) + " L/min")]] },
+  0x1D6: { name: "DI_limits", bus: "Vehicle", role: "read only — torque limit flags", unverified: true,
+    decode: d => [["Torque limited by oil pump fluid temp (bit26)", bit(d, 26) ? "YES" : "no"]] },
   0x398: { name: "GTW_carConfig", bus: "Vehicle", role: "read (HW version detect)",
     decode: d => [["Autopilot computer", pick({0:"Legacy (HW1/2)",1:"Legacy (HW2.5)",2:"HW3",3:"HW4"}, (d[0] >> 6) & 3)]] },
   0x399: { name: "DAS_status (HW3) / ISA (HW4)", bus: "Vehicle", role: "read (AP state)", csIdx: 7, decode: dasStatus },
@@ -251,18 +253,19 @@ function oilPump(d, front) {
   const st = pick({0:"STANDBY",1:"ENABLE (pumping)",2:"COLD_STARTUP",6:"FAULTED",7:"SNA"}, d[0] & 7);
   const t = v => sna8(v, x => (x - 40) + " °C"), kpa = v => sna8(v, x => x * 2 + " kPa (" + fix(x * 2 * 0.145038) + " psi)");
   const lpm = v => sna8(v, x => fix(x * 0.06, 2) + " L/min"), amp = v => sna8(v, x => fix(x * 0.1) + " A");
-  return [["Oil pump state", st],
+  const flowOk = d[1] !== 255 && d[2] !== 255 && d[1] > 0 ? (d[2] >= d[1] * 0.8 ? "OK — actual flow meets target" : "LOW — actual flow below 80% of target") : "n/a";
+  return [["Oil pump state", st], ["Flow check (pressure stand-in)", flowOk],
     ["Fluid estimate confidence", (d[0] >> 3) & 1 ? "high" : "low"],
     ["Lead angle", fix(((d[0] >> 4) & 0x0F) * 1.875) + "°"],
     [front ? "Flow target / duty (byte1)" : "Flow target", lpm(d[1])],
     ["Flow actual", lpm(d[2])],
-    ["— Layout A (onyx-m2, fw 2021.24) —", ""],
-    ["Pump board temp (byte3)", t(d[3])], ["Oil temp (byte4)", t(d[4])],
+    ["— Layout A (onyx-m2, fw 2021.24, more likely current) —", ""],
+    ["Pump temp A (byte3, likely pump board)", t(d[3])], ["Pump temp B (byte4, likely fluid)", t(d[4])],
     ["Pump voltage (byte5)", sna8(d[5], x => fix(x * 0.1) + " V")], ["Pump current (byte6)", amp(d[6])],
-    ["— Layout B (joshwardell, 2021) —", ""],
-    ["Oil temp (byte3)", t(d[3])],
-    front ? ["Oil temp estimate (byte4)", t(d[4])] : ["Phase current (byte4)", amp(d[4])],
-    ["OIL PRESSURE estimate (byte5)", kpa(d[5])], ["Oil pressure expected (byte6)", kpa(d[6])],
+    ["— Layout B (joshwardell, older fw — probably stale) —", ""],
+    ["Pump temp A (byte3)", t(d[3])],
+    front ? ["Pump temp B (byte4)", t(d[4])] : ["Phase current (byte4)", amp(d[4])],
+    ["Oil pressure ESTIMATE (byte5, layout B only — likely wrong on new fw)", kpa(d[5])], ["Oil pressure expected (byte6, layout B only)", kpa(d[6])],
     front ? ["Phase current (byte7)", amp(d[7])] : ["Pressure residual (byte7)", sna8(d[7], x => (x * 4 - 500) + " kPa")]];
 }
 
@@ -401,7 +404,7 @@ function runLog() {
   if ((d = g(0x132))) facts.push(["Pack", DB[0x132].decode(pad8(d)).map(r => r[1]).join(" · ")]);
   [[0x396, "Front oil pump"], [0x395, "Rear oil pump"]].forEach(([id, k]) => {
     if ((d = g(id))) { const r = oilPump(pad8(d), id === 0x396);
-      facts.push([k + " (unverified)", r[0][1] + " · " + r[4][1] + " · est. " + r[13][1]]); } });
+      facts.push([k + " (unverified)", r[0][1] + " · " + r[5][1] + " · flow " + r[1][1].split(" ")[0]]); } });
   if ((d = g(0x318)) && (d[6] & 3)) facts.push(["OTA", "update in progress"]);
 
   const known = [...ids.keys()].filter(k => DB[k]).length;
