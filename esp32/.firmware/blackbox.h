@@ -35,7 +35,7 @@
 #if defined(BOARD_LILYGO)
   #define BLACKBOX_BACKEND_SD       1
   #define BLACKBOX_BACKEND_NAME     "sd"
-#elif defined(BOARD_WAVESHARE_S3) || defined(BOARD_LILYGO_T2CAN)
+#elif defined(BOARD_WAVESHARE_S3) || defined(BOARD_LILYGO_T2CAN) || defined(BOARD_WAVESHARE_S3_CAN_2CH)
   #define BLACKBOX_BACKEND_LITTLEFS 1
   #define BLACKBOX_BACKEND_NAME     "littlefs"
 #else

@@ -69,6 +69,7 @@ jobs:
           - lilygo-t2can-fd
           - ttgo-tdisplay
           - waveshare-s3-can
+          - waveshare-s3-can-2ch
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

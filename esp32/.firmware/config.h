@@ -52,6 +52,8 @@
   #define BOARD_NAME "LilyGO T-CAN485"
 #elif defined(BOARD_TTGO_DISPLAY)
   #define BOARD_NAME "TTGO T-Display + MCP2515"
+#elif defined(BOARD_WAVESHARE_S3_CAN_2CH)
+  #define BOARD_NAME "Waveshare ESP32-S3-CAN-2CH"
 #elif defined(BOARD_WAVESHARE_S3)
   #define BOARD_NAME "Waveshare ESP32-S3-RS485-CAN"
 #elif defined(BOARD_M5STACK_ATOM_MATRIX)
@@ -110,6 +112,23 @@
   #define SD_MOSI            15
   #define SD_SCLK            14
   #define SD_CS              13
+#elif defined(BOARD_WAVESHARE_S3_CAN_2CH)
+  // Waveshare ESP32-S3-CAN-2CH: CAN_1 is the S3's TWAI through an isolator;
+  // CAN_2 is an XL2515QF20 (MCP2515-compatible, 16 MHz crystal) on SPI with
+  // its own INT. No reset pin — the driver resets the chip over SPI
+  // (PIN_MCP_RST stays -1). PWR/CAN LEDs are hardwired; no addressable LED.
+  #define PIN_CAN_TX         15
+  #define PIN_CAN_RX         16
+  #define PIN_LED            -1
+  #define PIN_BUTTON         0    // BOOT button, active-LOW, internal pull-up
+  #define PIN_MCP_CS         17
+  #define PIN_MCP_SCK        21
+  #define PIN_MCP_MOSI       41
+  #define PIN_MCP_MISO       42
+  #define PIN_MCP_INT        18
+  #ifndef MCP_CRYSTAL_MHZ
+  #define MCP_CRYSTAL_MHZ    MCP_16MHZ
+  #endif
 #elif defined(BOARD_TTGO_DISPLAY)
   #define PIN_LED            -1   // Blue LED is hardwired to charging IC (TP4054)
   #define PIN_LCD_BL         4    // ST7789 backlight

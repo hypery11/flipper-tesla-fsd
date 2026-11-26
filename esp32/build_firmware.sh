@@ -36,6 +36,7 @@ Outputs:
 
 Available envs in this project:
   waveshare-s3-can
+  waveshare-s3-can-2ch
   m5stack-atom
   m5stack-atom-swap-pins
   esp32-mcp2515
@@ -79,6 +80,14 @@ case "$ENV_NAME" in
         CHIP="esp32s3"
         BOOT_OFFSET="0x0000"
         FLASH_SIZE="8MB"
+        FLASH_FREQ="80m"
+        FLASH_MODE="dio"
+        BAUD="921600"
+        ;;
+    waveshare-s3-can-2ch)
+        CHIP="esp32s3"
+        BOOT_OFFSET="0x0000"
+        FLASH_SIZE="16MB"
         FLASH_FREQ="80m"
         FLASH_MODE="dio"
         BAUD="921600"
