@@ -12,6 +12,7 @@ Cost is the board only; the setups further down add the X179 or OBD-II cable.
 | **LILYGO T-CAN485** → X179 | **~$15** | X179 4-wire | 1 (SN65HVD230) | Yes | SD card CAN dump, tested on Model X/S |
 | **LILYGO TTGO T-Display + MCP2515** → X179 | **~$20** | X179 4-wire (+12 V→5 V buck or USB-C) | 1 (MCP2515) | Yes | On-board 1.14" ST7789 status display |
 | Waveshare ESP32-S3-RS485-CAN → X179 | ~$18 | X179 4-wire | 1 (TWAI) | Yes | All-in-one board |
+| Waveshare ESP32-S3-CAN-2CH → X179 | ~$20 | X179 4-wire (two isolated channels) | **2 independent** (TWAI + XL2515) | Yes | Dual-CAN, isolated screw terminals, 7–36 V supply |
 | Flipper Zero + Electronic Cats CAN Add-On → OBD-II | ~$200-235 | OBD-II plug | 1 (Party CAN) | No | If you already own a Flipper |
 | Flipper Zero + generic MCP2515 → OBD-II | ~$175-205 | OBD-II wire | 1 (Party CAN) | No | Budget Flipper option |
 

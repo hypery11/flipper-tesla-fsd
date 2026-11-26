@@ -1901,6 +1901,8 @@ void setup() {
 
 #if defined(CAN_DRIVER_T2CAN_DUAL) && defined(BOARD_LILYGO_T2CAN_FD)
     Serial.println("[CAN] Driver: LilyGO T-2CAN FD dual CAN (TWAI can0 + MCP2518FD can1, classic CAN)");
+#elif defined(CAN_DRIVER_T2CAN_DUAL) && defined(BOARD_WAVESHARE_S3_CAN_2CH)
+    Serial.println("[CAN] Driver: Waveshare ESP32-S3-CAN-2CH dual CAN (TWAI can0 + XL2515/MCP2515 can1)");
 #elif defined(CAN_DRIVER_T2CAN_DUAL)
     Serial.println("[CAN] Driver: LilyGO T-2CAN dual CAN (TWAI can0 + MCP2515 can1)");
 #elif defined(CAN_DRIVER_TWAI)
@@ -2138,11 +2140,11 @@ void loop() {
     ota_verify_tick(now);
     g_loop_health.mark(LOOP_STAGE_OTHER, micros());
 
-    // Drain all available CAN frames in one shot. On LilyGO T-2CAN, can1 is the
-    // SPI controller, read only when polled (the MCP2515 has just two RX
-    // buffers, the T-2CAN FD's MCP2518FD a 32-frame FIFO), so poll it before
-    // and after can0.
-#if defined(CAN_DRIVER_T2CAN_DUAL) && defined(BOARD_LILYGO_T2CAN)
+    // Drain all available CAN frames in one shot. On the T-2CAN and the
+    // Waveshare CAN-2CH, can1 is the SPI controller, read only when polled
+    // (the MCP2515 has just two RX buffers, the T-2CAN FD's MCP2518FD a
+    // 32-frame FIFO), so poll it before and after can0.
+#if defined(CAN_DRIVER_T2CAN_DUAL) && (defined(BOARD_LILYGO_T2CAN) || defined(BOARD_WAVESHARE_S3_CAN_2CH))
     drain_can_bus_index(1);
     drain_can_bus_index(0);
     drain_can_bus_index(1);

@@ -180,6 +180,7 @@ Any ESP32 board + CAN transceiver works. Pick the matching build env in `platfor
 | `lilygo-t2can` | LilyGO-T2CAN | TWAI/MCP2515 SPI | 7 / 6 | ESP32-S3-WROOM-1U (MCN16R8) with MCP2515; the 8 MB PSRAM holds the black-box ring (40000 frames) |
 | `lilygo-t2can-fd` | LilyGO T-2CAN FD (H784-A) | TWAI/MCP2518FD SPI | 7 / 6 | Same board with an MCP2518FD on `can1`, classic CAN 2.0 at 500 kbps; PSRAM as on `lilygo-t2can`; not yet confirmed on real hardware |
 | `waveshare-s3-can` | Waveshare ESP32-S3-RS485-CAN | TWAI | 15 / 16 | ESP32-S3R8 (8 MB octal PSRAM in the chip) with 16 MB flash, USB-CDC. The build uses 8 MB of the flash and doesn't enable the PSRAM yet (board default memory type, no `BOARD_HAS_PSRAM`), so the black-box ring is the internal-RAM one (6000 frames) |
+| `waveshare-s3-can-2ch` | Waveshare ESP32-S3-CAN-2CH | TWAI + MCP2515 SPI | 15 / 16 | Dual isolated CAN: CAN_1 is TWAI, CAN_2 is an XL2515QF20 (MCP2515-compatible, 16 MHz crystal) on SPI CS=17 INT=18 SCK=21 MOSI=41 MISO=42. ESP32-S3R8, 16 MB flash, USB-CDC; the 8 MB PSRAM holds the black-box ring (40000 frames) |
 | `esp32-generic-twai` | Classic ESP32 DevKit + SN65HVD230 | TWAI | 21 / 22 | No LED; build from source (no prebuilt image) |
 | `esp32-generic-twai-sniffer` | Classic ESP32 DevKit + SN65HVD230 | TWAI (hardware Listen-Only) | 21 / 22 | `SNIFFER_ONLY`: can never transmit; build from source |
 | other | Any ESP32 / ESP32-S3 + CAN transceiver | TWAI | any two pins | Copy the closest env and override `PIN_CAN_TX` / `PIN_CAN_RX` (the envs target classic ESP32 or ESP32-S3; there is no ESP32-C3 env) |
@@ -249,6 +250,22 @@ The FD version has an MCP2518FD where the classic board has the MCP2515, on the 
 - At every boot the driver starts the MCP2518FD in Listen-Only and measures its crystal (40 MHz on LilyGO's schematic). If the measurement doesn't match, `can1` stays off the bus and the serial log says what it measured.
 - The MCP2518FD has no reset pin. GPIO 9 goes to its INT0/GPIO0 pin and GPIO 3 (through the DIP switch next to the chip) to INT1/GPIO1; the firmware drives neither.
 - Not yet confirmed on real hardware. Start in Listen-Only and check that `can1` receives before you switch to Active.
+
+### Waveshare ESP32-S3-CAN-2CH
+
+The [Waveshare ESP32-S3-CAN-2CH](https://www.waveshare.net/shop/ESP32-S3-CAN-2CH.htm) (onboard antenna; the `-U` external-antenna version is the same board) has two isolated CAN channels on screw terminals. Flash `waveshare-s3-can-2ch`; it runs the same dual driver as the T-2CAN (`CAN_DRIVER_T2CAN_DUAL`).
+
+| Firmware bus | Board channel | Controller | MCU pins |
+|---|---|---|---|
+| `can0` | `CAN_1` terminal | ESP32-S3 TWAI | TX=15, RX=16 |
+| `can1` | `CAN_2` terminal | XL2515QF20 (MCP2515-compatible, 16 MHz crystal) | CS=17, INT=18, SCK=21, MOSI=41, MISO=42 |
+
+- Wire each channel to the vehicle network you want it on, exactly as on the T-2CAN above (one channel per X179 pair / OBD-II tap). Which terminal is `can0` vs `can1` is fixed by the table, not by the silkscreen order.
+- Each channel has a 120 Ω termination resistor position enabled by a jumper cap (`CAN_1` / `CAN_2` matching-resistor jumpers). Fit it only when the board terminates that bus.
+- The bus side is galvanically isolated: use the terminal's `SGND` (isolated ground) as the CAN reference, not the logic-side `GND`.
+- Power from USB-C, or 7–36 V on the power terminals. The PWR/CAN_1/CAN_2 LEDs are hardwired; there is no firmware-controlled LED (`PIN_LED=-1`), and the BOOT button (GPIO 0) is the only button.
+- The ESP32-S3R8's 8 MB PSRAM is enabled, so the black box gets the 40000-frame PSRAM ring, stored in LittleFS on the 16 MB flash.
+- Not yet confirmed on real hardware. Start in Listen-Only and check that both buses receive before you switch to Active.
 
 ### OBD-II (Primary — Plug & Play)
 
