@@ -59,7 +59,7 @@
 ### TLSSC Restore（v2.10+）
 - 在 **VIN 被封禁** 的车辆上恢复交通信号灯与停车标志控制
 - 对 CAN ID `0x331` 做读取-修改-重发 — 将 `DAS_autopilot` 设为 SELF_DRIVING
-- **ESP32 防重启重播：** 将修改后的 8 字节 frame 与来源总线保存到 NVS，在开机或重新启用后以 10 Hz 重播最多 60 秒（最多 600 帧）。每收到一帧原始 `0x331` 后让出 2 秒，只在缓存的总线上发送，并遵守 Active/Service 的 TX 门控。该设计用于避免 MCU 重启竞态，但尚未实车验证。Flipper 实现不变，仍可能触发重启
+- **ESP32 防重启重播：** 将修改后的 8 字节 frame 与来源总线保存到 NVS，在开机或重新启用后以 10 Hz 重播最多 60 秒（最多 600 帧）。每收到一帧原始 `0x331` 后让出 2 秒，只在缓存的总线上发送，并遵守 Active/Service 的 TX 门控。首个重播 tick 提前到 Wi-Fi 初始化之前；NVS 保存失败每 5 秒重试；CAN 静默 30 秒后检测到车辆唤醒会重新开启窗口；发送失败不消耗帧数上限。该设计用于避免 MCU 重启竞态，但尚未实车验证。Flipper 实现不变，仍可能触发重启
 - 已在 Palladium（Model S Plaid 2023）、HW4 Highland（Model 3 Performance 2024）与 Intel HW3（需 AP-first 变通）上确认可用
 - 不会恢复完整 FSD 可视化 — 只恢复 TLSSC（停车标志／交通信号灯）
 - **建议的封禁车组合**：同时启用 **TLSSC Restore** + **TLSSC bit38**（`0x3FD` mux 0 bit 38）— @RoyRakete 在 HW3 / 2026.2.6 上确认可靠（[#18](https://github.com/hypery11/flipper-tesla-fsd/issues/18#issuecomment-4413430516)）。在某些封禁固件上，单独开任一个都不稳定；两者搭配才能重新启用 AP/TACC 接管

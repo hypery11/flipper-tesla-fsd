@@ -9,6 +9,8 @@
 #define TLSSC_NR_PERIOD_MS 100u
 #define TLSSC_NR_MAX_FRAMES 600u
 #define TLSSC_NR_STOCK_FRESH_MS 2000u
+#define TLSSC_NR_SAVE_RETRY_MS 5000u
+#define TLSSC_NR_WAKE_QUIET_MS 30000u
 
 struct TlsscNrCache {
     uint8_t bus;
@@ -20,6 +22,8 @@ struct TlsscNrRuntime {
     TlsscNrCache cache;
     bool cache_valid;
     bool save_attempted;
+    uint32_t save_attempt_ms;
+    bool bus_quiet;
     uint32_t stock_rx_ms;
     uint32_t armed_ms;
     uint32_t last_replay_ms;
@@ -41,6 +45,31 @@ static inline void tlssc_nr_load(TlsscNrRuntime *runtime, const TlsscNrCache &ca
     runtime->save_attempted = true;
 }
 
+static inline bool tlssc_nr_should_save(const TlsscNrRuntime *runtime,
+                                        uint32_t now_ms) {
+    return runtime->cache_valid && !runtime->save_attempted &&
+           (runtime->save_attempt_ms == 0 ||
+            (uint32_t)(now_ms - runtime->save_attempt_ms) >= TLSSC_NR_SAVE_RETRY_MS);
+}
+
+static inline void tlssc_nr_note_save_attempt(TlsscNrRuntime *runtime,
+                                              uint32_t now_ms) {
+    runtime->save_attempt_ms = now_ms ? now_ms : 1u;
+}
+
+static inline void tlssc_nr_mark_saved(TlsscNrRuntime *runtime) {
+    runtime->save_attempted = true;
+}
+
+static inline bool tlssc_nr_wake_edge(TlsscNrRuntime *runtime,
+                                      uint32_t last_rx_ms, uint32_t now_ms) {
+    bool quiet = last_rx_ms == 0 ||
+                 (uint32_t)(now_ms - last_rx_ms) >= TLSSC_NR_WAKE_QUIET_MS;
+    bool woke = runtime->bus_quiet && !quiet;
+    runtime->bus_quiet = quiet;
+    return woke;
+}
+
 static inline bool tlssc_nr_observe(TlsscNrRuntime *runtime, const uint8_t *data,
                                    uint8_t len, uint8_t bus, uint32_t now_ms) {
     if (!data || len != TLSSC_NR_FRAME_LEN || bus >= 2u) return false;
@@ -59,6 +88,8 @@ static inline bool tlssc_nr_observe(TlsscNrRuntime *runtime, const uint8_t *data
     runtime->cache.len = len;
     memcpy(runtime->cache.data, patched, sizeof(patched));
     runtime->cache_valid = true;
+    runtime->save_attempted = false;
+    runtime->save_attempt_ms = 0;
     return true;
 }
 
@@ -88,9 +119,12 @@ static inline bool tlssc_nr_due(TlsscNrRuntime *runtime, uint8_t bus,
 static inline void tlssc_nr_record_result(TlsscNrRuntime *runtime, bool sent,
                                          uint32_t now_ms) {
     runtime->last_replay_ms = now_ms ? now_ms : 1u;
-    runtime->burst++;
-    if (sent) runtime->replay_ok++;
-    else runtime->replay_fail++;
+    if (sent) {
+        runtime->burst++;
+        runtime->replay_ok++;
+    } else {
+        runtime->replay_fail++;
+    }
 }
 
 static inline void tlssc_nr_copy_payload(const TlsscNrRuntime *runtime,
