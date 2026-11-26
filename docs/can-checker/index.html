@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tesla CAN Code Checker</title>
+<style>
+  :root {
+    --bg: #111317; --panel: #1b1e24; --panel2: #23272f; --line: #323843;
+    --text: #e8eaed; --dim: #9aa3af; --accent: #3e8bff; --ok: #34c77b;
+    --warn: #f2b33d; --bad: #ff5b5b; --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 18px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 18px 24px 8px; display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 28px; font-weight: 650; }
+  header span { color: var(--dim); font-size: 16px; }
+  nav { display: flex; gap: 8px; padding: 8px 24px; flex-wrap: wrap; }
+  nav button { flex: 1 1 0; min-width: 180px; }
+  main { padding: 8px 24px 40px; max-width: 1400px; }
+  button { font: inherit; font-size: 20px; min-height: 60px; padding: 0 22px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--panel2); color: var(--text); cursor: pointer; }
+  button.on, button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:active { transform: scale(.98); }
+  input, textarea { font: 22px/1.4 var(--mono); width: 100%; color: var(--text); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  textarea { font-size: 17px; min-height: 260px; resize: vertical; }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; margin-top: 16px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .row > input { flex: 1 1 420px; }
+  .hint { color: var(--dim); font-size: 16px; margin: 8px 0 0; }
+  .hidden { display: none; }
+  h2 { margin: 0 0 10px; font-size: 22px; }
+  h3 { margin: 18px 0 8px; font-size: 18px; color: var(--dim); font-weight: 600; }
+  .mono { font-family: var(--mono); }
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 15px; font-weight: 600;
+    border: 1px solid currentColor; margin-left: 8px; vertical-align: middle; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); } .dim { color: var(--dim); }
+  table { width: 100%; border-collapse: collapse; font-size: 17px; }
+  th, td { text-align: left; padding: 10px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 15px; }
+  td.mono { white-space: nowrap; }
+  tr.click { cursor: pointer; } tr.click:active { background: var(--panel2); }
+  .bits { display: grid; grid-template-columns: 54px repeat(8, 1fr); gap: 4px; font: 14px var(--mono); margin-top: 6px; }
+  .bits div { text-align: center; padding: 8px 0; border-radius: 6px; background: var(--panel2); }
+  .bits .hdr { background: none; color: var(--dim); }
+  .bits .b1 { background: #2c3d5a; color: #fff; }
+  .bits .known { outline: 2px solid var(--warn); outline-offset: -2px; }
+  .bits .b1.known { background: #6a5320; }
+  .kv { display: grid; grid-template-columns: minmax(200px, 34%) 1fr; gap: 6px 16px; }
+  .kv div:nth-child(odd) { color: var(--dim); }
+  .summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .summary .card { margin: 0; padding: 14px 16px; }
+  .summary b { display: block; font-size: 24px; margin-top: 4px; }
+  .msg { padding: 10px 14px; border-radius: 10px; background: var(--panel2); margin-top: 8px; }
+  .msg.bad { border-left: 4px solid var(--bad); color: var(--text); }
+  .msg.warn { border-left: 4px solid var(--warn); color: var(--text); }
+  .msg.ok { border-left: 4px solid var(--ok); color: var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tesla CAN Code Checker</h1>
+  <span>Decode frames and logs. Runs fully in this page — nothing is sent anywhere, nothing touches the car.</span>
+</header>
+
+<nav>
+  <button data-tab="frame" class="on">Check a frame</button>
+  <button data-tab="log">Check a log</button>
+  <button data-tab="test">Check a .cantest</button>
+  <button data-tab="ids">Known IDs</button>
+</nav>
+
+<main>
+  <!-- ───── single frame ───── -->
+  <section id="tab-frame">
+    <div class="card">
+      <h2>Frame</h2>
+      <div class="row">
+        <input id="frameIn" placeholder="3FD#1000000000004000" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        <button class="primary" id="frameGo">Check</button>
+      </div>
+      <p class="hint">Accepts <span class="mono">ID#DATA</span>, <span class="mono">ID DATA</span>, <span class="mono">0x3FD 10 00 00 …</span>, or a whole candump line like <span class="mono">(1.234) can0 370#00…</span>.</p>
+      <div class="row" style="margin-top:12px">
+        <button data-ex="398#C000000000000000">Example: HW4 config</button>
+        <button data-ex="3FD#0000000000404000">Example: FSD bit on</button>
+        <button data-ex="370#0000080000004000">Example: EPAS</button>
+        <button data-ex="118#3900200000000000">Example: gear</button>
+        <button data-ex="395#19323C5A6E968C7D">Example: oil pump</button>
+      </div>
+    </div>
+    <div id="frameOut"></div>
+  </section>
+
+  <!-- ───── log ───── -->
+  <section id="tab-log" class="hidden">
+    <div class="card">
+      <h2>Log</h2>
+      <textarea id="logIn" spellcheck="false" placeholder="Paste candump / capture lines here, one frame per line.&#10;(0.000100) can0 398#C000000000000000&#10;(0.010200) can0 3FD#0000000000404000"></textarea>
+      <div class="row" style="margin-top:12px">
+        <button class="primary" id="logGo">Check log</button>
+        <label class="hint" style="margin:0">or open a file <input type="file" id="logFile" accept=".log,.txt,.cantest,.csv" style="font-size:16px;width:auto;padding:8px"></label>
+        <button id="logClear">Clear</button>
+      </div>
+    </div>
+    <div id="logOut"></div>
+  </section>
+
+  <!-- ───── .cantest ───── -->
+  <section id="tab-test" class="hidden">
+    <div class="card">
+      <h2>.cantest profile</h2>
+      <textarea id="testIn" spellcheck="false" placeholder="# Name: my test&#10;3FD#1000000000004000  repeat=20  delay=100&#10;118#0000000000000000"></textarea>
+      <div class="row" style="margin-top:12px">
+        <button class="primary" id="testGo">Validate</button>
+      </div>
+      <p class="hint">Uses the same rules as the Flipper's Send Test loader (docs/cantest-format.md): 0x229 lines are rejected, at most 8 data bytes, 11-bit IDs.</p>
+    </div>
+    <div id="testOut"></div>
+  </section>
+
+  <!-- ───── id table ───── -->
+  <section id="tab-ids" class="hidden">
+    <div class="card">
+      <div class="row"><input id="idFilter" placeholder="Filter by ID or name (e.g. 3FD, EPAS)"></div>
+      <div id="idTable" style="margin-top:12px"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+// ─── bit helpers (Tesla: little-endian, bit n = byte n>>3, bit n&7) ────────
+const bit = (d, n) => (d[n >> 3] >> (n & 7)) & 1;
+function le(d, start, len) {           // unsigned little-endian field
+  let v = 0;
+  for (let i = 0; i < len; i++) v += bit(d, start + i) * 2 ** i;
+  return v;
+}
+const sgn = (v, len) => v >= 2 ** (len - 1) ? v - 2 ** len : v;
+const hex = (n, w = 2) => n.toString(16).toUpperCase().padStart(w, "0");
+const fix = (v, p = 1) => Number(v.toFixed(p)).toString();
+// Additive checksum used by several frames: sum of the other bytes + id low + id high
+function addSum(id, d, csIdx) {
+  let s = (id & 0xFF) + (id >> 8);
+  d.forEach((b, i) => { if (i !== csIdx) s += b; });
+  return s & 0xFF;
+}
+function checksum(id, d, csIdx) {
+  if (d.length <= csIdx) return null;
+  const want = addSum(id, d, csIdx);
+  return { ok: d[csIdx] === want, have: d[csIdx], want };
+}
+const pick = (tbl, v) => (v in tbl ? tbl[v] : "value " + v);
+
+// ─── the dictionary (IDs/bit positions from esp32/.firmware/config.h + can_signals.h) ───
+// role: what the project does with it. watch = bits the project reads or writes.
+const DB = {
+  0x045: { name: "STW_ACTN_RQ", bus: "Vehicle", role: "read (legacy follow distance stalk)" },
+  0x082: { name: "UI_tripPlanning", bus: "Vehicle", role: "written (battery precondition)",
+    decode: d => [["Precondition flags", "0x" + hex(d[0]) + ((d[0] & 0x05) === 0x05 ? " (precondition requested)" : "")]] },
+  0x101: { name: "GTW_epasControl", bus: "Chassis", role: "listed only" },
+  0x102: { name: "VCLEFT_doorStatus", bus: "Body", role: "read (mirror state)" },
+  0x118: { name: "DI_systemStatus", bus: "Vehicle", role: "read (gear gate)", csIdx: 0,
+    decode: d => [["Gear", pick({0:"INVALID",1:"P",2:"R",3:"N",4:"D",7:"SNA"}, le(d, 21, 3))]] },
+  0x119: { name: "VCSEC_windowRequests", bus: "Vehicle", role: "written (windows)" },
+  0x129: { name: "SCCM_steeringAngleSensor", bus: "Vehicle", role: "read (soft engage gate)" },
+  0x132: { name: "BMS_hvBusStatus", bus: "Vehicle", role: "read (pack V / A)",
+    decode: d => [["Pack voltage", fix(le(d, 0, 16) * 0.01, 2) + " V"],
+                  ["Pack current", fix(sgn(le(d, 16, 16), 16) * 0.1) + " A"]] },
+  0x145: { name: "ESP_status", bus: "Chassis", role: "read (brake pedal)",
+    decode: d => [["Driver brake", pick({0:"not applied",1:"not init / off",2:"APPLYING",3:"fault"}, (d[3] >> 5) & 3)]] },
+  0x175: { name: "ESP_wheelSpeeds", bus: "Party", role: "read only",
+    decode: d => ["FL", "FR", "RL", "RR"].map((w, i) => {
+      const v = le(d, i * 13, 13) * 0.04;
+      return [w + " wheel", v >= 327 ? "SNA" : fix(v) + " km/h"];
+    }) },
+  0x219: { name: "VCSEC_TPMSData", bus: "Vehicle", role: "read (tyre pressure)" },
+  0x229: { name: "SCCM_rightStalk", bus: "Vehicle", role: "read only — NEVER send (gear / AP request)", danger: true,
+    decode: d => [["Gear lever", pick({0:"center",1:"half up",2:"full up",3:"half down",4:"full down"}, (d[1] >> 4) & 7)]] },
+  0x238: { name: "UI_driverAssistMapData", bus: "Vehicle", role: "read (map speed limit)",
+    decode: d => { const v = d[1] & 0x1F;
+      const map = [0,5,7,10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,85,90,95,100,105,110,115,120,130,140,150,160];
+      return [["Map speed limit", v === 0 ? "unknown" : v === 30 ? "unlimited" : v === 31 ? "SNA" : map[v] + " (bucket " + v + ")"]]; } },
+  0x257: { name: "DI_speed", bus: "Vehicle", role: "read (standstill interlock)",
+    decode: d => { const r = le(d, 12, 12); return [["Vehicle speed", r === 4095 ? "SNA" : fix(r * 0.08 - 40) + " km/h"]]; } },
+  0x25D: { name: "CP_status", bus: "Vehicle", role: "read (charge port)" },
+  0x273: { name: "UI_vehicleControl", bus: "Vehicle", role: "written (mirrors / locks / wipers)" },
+  0x292: { name: "BMS_socStatus", bus: "Vehicle", role: "read (SOC)" },
+  0x293: { name: "UI_chassisControl", bus: "Vehicle", role: "listed only" },
+  0x2B6: { name: "DI_chassisControlStatus", bus: "Vehicle", role: "listed only" },
+  0x2B9: { name: "DAS_control", bus: "Vehicle", role: "read (set speed / ACC)", csIdx: 7,
+    decode: d => { const s = le(d, 0, 12);
+      return [["Set speed", s === 0xFFF ? "SNA" : fix(s * 0.1) + " km/h"],
+              ["ACC state", le(d, 12, 4)], ["Counter", le(d, 53, 3)]]; } },
+  0x312: { name: "BMS_thermalStatus", bus: "Vehicle", role: "read (battery temp)" },
+  0x313: { name: "UI_trackModeSettings", bus: "Vehicle", role: "experimental (Track Mode — unproven)" },
+  0x318: { name: "GTW_carState", bus: "Vehicle", role: "read (OTA detect)",
+    decode: d => [["Update in progress", (d[6] & 3) ? "YES (" + (d[6] & 3) + ") — project pauses" : "no"]] },
+  0x331: { name: "DAS_autopilotConfig", bus: "Vehicle", role: "written (tier restore)",
+    decode: d => [["Tier byte", "0x" + hex(d[0]) + ((d[0] & 0x3F) === 0x1B ? " (SELF_DRIVING)" : "")]] },
+  0x334: { name: "UI_powertrainControl", bus: "Vehicle", role: "experimental (Acceleration Mode — unproven)", csIdx: 7,
+    decode: d => [["Pedal map", pick({0:"CHILL",1:"SPORT / Standard",2:"PERFORMANCE"}, (d[0] >> 5) & 3)],
+                  ["Counter", d[6] >> 4]] },
+  0x33A: { name: "UI_range", bus: "Vehicle", role: "read (SOC on screen)" },
+  0x36B: { name: "DI_alertMatrix3", bus: "Vehicle", role: "listed only" },
+  0x370: { name: "EPAS3P_sysStatus", bus: "Chassis", role: "modified (nag: hands-on level)",
+    watch: { all: [38, 39] },
+    decode: d => [["Hands-on level", pick({0:"0 none",1:"1 OK (nag satisfied)",2:"2",3:"3"}, (d[4] >> 6) & 3)],
+                  ["Torsion bar torque", fix((((d[2] & 0x0F) << 8) | d[3]) * 0.01 - 20.5, 2) + " Nm"],
+                  ["Counter", d[6] & 0x0F]] },
+  0x389: { name: "DAS_status2", bus: "Vehicle", role: "read (ACC speed limit)",
+    decode: d => { const v = le(d, 0, 10);
+      return [["ACC speed limit", v === 0 ? "none" : v === 1023 ? "SNA" : fix(v * 0.2) + " mph (" + fix(v * 0.2 * 1.609344) + " km/h)"]]; } },
+  0x395: { name: "DI_oilPump (rear drive unit oil pump)", bus: "Vehicle", role: "read only — oil pump status", unverified: true, decode: d => oilPump(d, false) },
+  0x396: { name: "DI_frontOilPump (front drive unit oil pump)", bus: "Vehicle", role: "read only — oil pump status", unverified: true, decode: d => oilPump(d, true) },
+  0x557: { name: "DI_frontThermalControl", bus: "Vehicle", role: "read only — front oil flow request", unverified: true,
+    decode: d => [["Front oil flow request", sna8(d[3], v => fix(v * 0.06, 2) + " L/min")]] },
+  0x5D7: { name: "DI_rearThermalControl", bus: "Vehicle", role: "read only — rear oil flow request", unverified: true,
+    decode: d => [["Rear oil flow request", sna8(d[3], v => fix(v * 0.06, 2) + " L/min")]] },
+  0x398: { name: "GTW_carConfig", bus: "Vehicle", role: "read (HW version detect)",
+    decode: d => [["Autopilot computer", pick({0:"Legacy (HW1/2)",1:"Legacy (HW2.5)",2:"HW3",3:"HW4"}, (d[0] >> 6) & 3)]] },
+  0x399: { name: "DAS_status (HW3) / ISA (HW4)", bus: "Vehicle", role: "read (AP state)", csIdx: 7, decode: dasStatus },
+  0x39B: { name: "DAS_status (HW4)", bus: "Vehicle", role: "read (AP state)", csIdx: 7, decode: dasStatus },
+  0x3C2: { name: "VCLEFT_switchStatus", bus: "Vehicle", role: "read / modified (scroll-wheel tap)",
+    decode: d => [["Mux (index)", d[0] & 3]] },
+  0x3E9: { name: "DAS_bodyControls", bus: "Vehicle", role: "written (lights / wipers)" },
+  0x3EE: { name: "DAS_autopilot (Legacy)", bus: "Vehicle", role: "modified (FSD bits, Legacy)",
+    watch: { 0: [46] }, decode: apControl },
+  0x3F5: { name: "VCFRONT_lighting", bus: "Vehicle", role: "read (turn signal)",
+    decode: d => { const t = {0:"off",1:"active low",2:"active high",3:"SNA"};
+      return [["Left indicator", t[d[0] & 3]], ["Right indicator", t[(d[0] >> 2) & 3]]]; } },
+  0x3F8: { name: "DAS_followDistance", bus: "Vehicle", role: "read (speed profile source)",
+    decode: d => [["Follow distance", (d[5] >> 5) & 7]] },
+  0x3FD: { name: "UI_autopilotControl", bus: "Vehicle", role: "modified (FSD core, HW3/HW4)",
+    watch: { 0: [19, 38, 39, 46, 47, 49, 50, 59, 60], 1: [19, 40, 41, 42, 45, 48, 50], 2: [6,7,8,9,10,11,12,13, 60, 61, 62] },
+    decode: apControl },
+  0x488: { name: "DAS_steeringControl", bus: "Chassis", role: "listed only" },
+  0x7FF: { name: "GTW_carConfig (mux)", bus: "Vehicle", role: "read / modified (AP tier, mux 2)",
+    decode: d => [["Mux", d[0] & 7]] },
+};
+
+// Drive-unit oil pump (0x395 rear / 0x396 front). Layout from the Model 3/Y
+// community DBCs (joshwardell/model3dbc, onyx-m2). Bytes 0-2 agree in both;
+// bytes 3-7 disagree, so both readings are shown. Not confirmed on a
+// refreshed (2021+) Model S/X. Tesla's "pressure" is a model estimate, not a sensor.
+const sna8 = (v, f) => v === 255 ? "SNA" : f(v);
+function oilPump(d, front) {
+  const st = pick({0:"STANDBY",1:"ENABLE (pumping)",2:"COLD_STARTUP",6:"FAULTED",7:"SNA"}, d[0] & 7);
+  const t = v => sna8(v, x => (x - 40) + " °C"), kpa = v => sna8(v, x => x * 2 + " kPa (" + fix(x * 2 * 0.145038) + " psi)");
+  const lpm = v => sna8(v, x => fix(x * 0.06, 2) + " L/min"), amp = v => sna8(v, x => fix(x * 0.1) + " A");
+  return [["Oil pump state", st],
+    ["Fluid estimate confidence", (d[0] >> 3) & 1 ? "high" : "low"],
+    ["Lead angle", fix(((d[0] >> 4) & 0x0F) * 1.875) + "°"],
+    [front ? "Flow target / duty (byte1)" : "Flow target", lpm(d[1])],
+    ["Flow actual", lpm(d[2])],
+    ["— Layout A (onyx-m2, fw 2021.24) —", ""],
+    ["Pump board temp (byte3)", t(d[3])], ["Oil temp (byte4)", t(d[4])],
+    ["Pump voltage (byte5)", sna8(d[5], x => fix(x * 0.1) + " V")], ["Pump current (byte6)", amp(d[6])],
+    ["— Layout B (joshwardell, 2021) —", ""],
+    ["Oil temp (byte3)", t(d[3])],
+    front ? ["Oil temp estimate (byte4)", t(d[4])] : ["Phase current (byte4)", amp(d[4])],
+    ["OIL PRESSURE estimate (byte5)", kpa(d[5])], ["Oil pressure expected (byte6)", kpa(d[6])],
+    front ? ["Phase current (byte7)", amp(d[7])] : ["Pressure residual (byte7)", sna8(d[7], x => (x * 4 - 500) + " kPa")]];
+}
+
+function dasStatus(d) {
+  const ap = d[0] & 0x0F, v = d[2] & 0x1F;
+  return [["Autopilot state", pick({0:"DISABLED",1:"UNAVAILABLE",2:"AVAILABLE",3:"ACTIVE_NOMINAL",4:"ACTIVE_RESTRICTED",5:"ACTIVE_NAV",8:"ABORTING",9:"ABORTED",14:"FAULT",15:"SNA"}, ap)],
+          ["Vision speed limit", v === 0 ? "unknown" : v === 31 ? "none" : v * 5 + " km/h"],
+          ["Hands-on state", (d[5] >> 2) & 0x0F],
+          ["Autopark ready", d[3] & 1 ? "yes" : "no"]];
+}
+function apControl(d) {
+  const mux = d[0] & 7, on = n => bit(d, n) ? "ON" : "off";
+  const out = [["Mux", mux]];
+  if (d.length > 4) out.push(["UI FSD selected (byte4 bit6)", (d[4] >> 6) & 1 ? "YES" : "no"]);
+  if (mux === 0) {
+    out.push(["bit46 FSD enable", on(46)], ["bit60 FSD enable (HW4)", on(60)],
+             ["bit38 TLSSC", on(38)], ["bit39 Continue on green", on(39)],
+             ["bit19 Nag clear", on(19)], ["bit47 Summon enable", on(47)],
+             ["bit59 Emergency vehicle (HW4)", on(59)],
+             ["HW3 driving profile (bits 49-50)", (d[6] >> 1) & 3]);
+  } else if (mux === 1) {
+    out.push(["bit19 Nag clear", on(19)], ["bits 40-42 apmv3Branch", le(d, 40, 3)],
+             ["bit45 Lane graph", on(45)], ["bit48 Cabin camera telemetry", on(48)]);
+  } else if (mux === 2) {
+    out.push(["HW3 FSD max-speed offset raw (bits 6-13)", ((d[0] >> 6) | ((d[1] & 0x3F) << 2))],
+             ["HW4 speed profile (bits 60-62)", (d[7] >> 4) & 7], ["bit63 mux2 valid", on(63)]);
+  }
+  return out;
+}
+
+// ─── parsing ───────────────────────────────────────────────────────────────
+function parseLine(raw) {
+  let s = raw.replace(/#.*$/, m => (/^#[0-9A-Fa-f]/.test(m) ? m : "")).trim(); // keep ID#DATA, drop comments
+  if (!s) return null;
+  s = s.replace(/^\([^)]*\)\s*/, "");                        // (timestamp)
+  s = s.replace(/^(v?can\d+|slcan\d+|bus\d+)\s+/i, "");      // bus name
+  let m = s.match(/^(?:0x)?([0-9A-Fa-f]{1,8})#([0-9A-Fa-f]*)(.*)$/);
+  let id, data, rest = "";
+  if (m) { id = m[1]; data = m[2]; rest = m[3]; }
+  else {
+    m = s.match(/^(?:0x)?([0-9A-Fa-f]{1,8})[\s,;:]+((?:(?:0x)?[0-9A-Fa-f]{1,2}[\s,]*){0,64})(.*)$/);
+    if (!m) return { error: "Can't read an ID and data from this line" };
+    id = m[1]; rest = m[3];
+    const parts = m[2].trim().split(/[\s,]+/).filter(Boolean).map(p => p.replace(/^0x/i, ""));
+    data = parts.length === 1 && parts[0].length > 2 ? parts[0] : parts.map(p => p.padStart(2, "0")).join("");
+  }
+  if (data.length % 2) return { error: "Data has an odd number of hex digits" };
+  const bytes = [];
+  for (let i = 0; i < data.length; i += 2) bytes.push(parseInt(data.slice(i, i + 2), 16));
+  return { id: parseInt(id, 16), idText: id, bytes, rest: rest.trim() };
+}
+
+// ─── frame check ───────────────────────────────────────────────────────────
+function frameReport(f) {
+  const info = DB[f.id];
+  const issues = [];
+  if (f.id > 0x7FF) issues.push(["warn", "ID is above 0x7FF (29-bit extended). The project's handlers only accept 11-bit IDs and drop this."]);
+  if (f.bytes.length > 8) issues.push(["bad", f.bytes.length + " data bytes. Classic CAN carries at most 8 — the project rejects this frame."]);
+  if (f.bytes.length === 0) issues.push(["warn", "No data bytes."]);
+  if (info && info.danger) issues.push(["bad", "0x229 is the right stalk. Sending it can request Drive or engage Autopilot. The Flipper refuses to send it."]);
+  if (info && info.unverified) issues.push(["warn", "Unverified for 2021+ Model S/X (incl. 2024 Model X): this layout comes from Model 3/Y community DBCs, two of which disagree on bytes 3-7, and Tesla moves these IDs between firmwares. Tesla's oil \"pressure\" is an estimate from the pump's electrical data — there is no oil pressure sensor. Compare with a capture from your car before trusting the numbers."]);
+  if (!info) issues.push(["warn", "Not in this checker's dictionary. It may still be a valid Tesla ID — see Known IDs for what is covered."]);
+  let cs = null;
+  if (info && info.csIdx !== undefined) {
+    cs = checksum(f.id, f.bytes, info.csIdx);
+    if (cs) issues.push([cs.ok ? "ok" : "bad", "Checksum (byte " + info.csIdx + "): " +
+      (cs.ok ? "valid 0x" + hex(cs.have) : "0x" + hex(cs.have) + " is wrong, expected 0x" + hex(cs.want) + " — the receiving ECU will discard this frame")]);
+  }
+  const d8 = f.bytes.slice(0, 8).concat(Array(Math.max(0, 8 - f.bytes.length)).fill(0));
+  const rows = info && info.decode && f.bytes.length ? info.decode(d8) : [];
+  const watch = info && info.watch ? (info.watch.all || info.watch[d8[0] & 7] || []) : [];
+
+  let h = '<div class="card"><h2 class="mono">0x' + hex(f.id, 3) + " " +
+    (info ? info.name : '<span class="dim">unknown</span>') +
+    (info ? '<span class="tag ' + (info.danger ? "bad" : /modified|written/.test(info.role) ? "warn" : "ok") + '">' + info.bus + "</span>" : "") + "</h2>";
+  if (info) h += '<div class="dim">Project use: ' + info.role + "</div>";
+  h += '<div class="mono" style="font-size:22px;margin-top:8px">' + f.bytes.map(b => hex(b)).join(" ") + ' <span class="dim">(' + f.bytes.length + " bytes)</span></div>";
+  issues.forEach(([k, t]) => h += '<div class="msg ' + k + '">' + t + "</div>");
+  if (rows.length) {
+    h += "<h3>Decoded</h3><div class=kv>" + rows.map(([k, v]) => "<div>" + k + "</div><div class=mono>" + v + "</div>").join("") + "</div>";
+  }
+  if (f.bytes.length) {
+    h += '<h3>Bits <span class="dim" style="font-weight:400">(Tesla little-endian numbering; outlined = bits the project reads or writes)</span></h3><div class="bits"><div class="hdr"></div>';
+    for (let b = 7; b >= 0; b--) h += '<div class="hdr">b' + b + "</div>";
+    for (let by = 0; by < Math.min(8, f.bytes.length); by++) {
+      h += '<div class="hdr">byte' + by + "</div>";
+      for (let b = 7; b >= 0; b--) {
+        const n = by * 8 + b, v = (f.bytes[by] >> b) & 1;
+        h += '<div class="' + (v ? "b1 " : "") + (watch.includes(n) ? "known" : "") + '" title="bit ' + n + '">' + n + ":" + v + "</div>";
+      }
+    }
+    h += "</div>";
+  }
+  return h + "</div>";
+}
+function runFrame() {
+  const raw = $("#frameIn").value;
+  const f = parseLine(raw);
+  $("#frameOut").innerHTML = !f ? "" : f.error ? '<div class="card"><div class="msg bad">' + f.error + "</div></div>" : frameReport(f);
+}
+
+// ─── log check ─────────────────────────────────────────────────────────────
+function runLog() {
+  const lines = $("#logIn").value.split(/\r?\n/);
+  const ids = new Map(); let bad = 0, total = 0; const badLines = [];
+  lines.forEach((l, i) => {
+    const f = parseLine(l);
+    if (!f) return;
+    if (f.error) { bad++; if (badLines.length < 5) badLines.push((i + 1) + ": " + escapeHtml(l.slice(0, 80))); return; }
+    total++;
+    let e = ids.get(f.id);
+    if (!e) ids.set(f.id, e = { id: f.id, count: 0, first: f, last: f, changes: 0, csBad: 0 });
+    if (e.last.bytes.join() !== f.bytes.join()) e.changes++;
+    e.count++; e.last = f;
+    const info = DB[f.id];
+    if (info && info.csIdx !== undefined) { const c = checksum(f.id, f.bytes, info.csIdx); if (c && !c.ok) e.csBad++; }
+  });
+  if (!total) { $("#logOut").innerHTML = '<div class="card"><div class="msg warn">No frames found.' + (bad ? " " + bad + " lines couldn't be read." : "") + "</div></div>"; return; }
+
+  // Key facts
+  const facts = [];
+  const g = id => ids.get(id) && ids.get(id).last.bytes;
+  let d;
+  if ((d = g(0x398))) facts.push(["Autopilot computer", DB[0x398].decode(d)[0][1]]);
+  const ap = [...ids.values()].filter(e => e.id === 0x3FD || e.id === 0x3EE);
+  if (ap.length) {
+    // look at the latest mux0 frame for the FSD bit
+    let mux0 = null;
+    lines.forEach(l => { const f = parseLine(l); if (f && !f.error && (f.id === 0x3FD || f.id === 0x3EE) && (f.bytes[0] & 7) === 0) mux0 = f; });
+    if (mux0) facts.push(["FSD bit46 (last mux0)", bit(pad8(mux0.bytes), 46) ? "ON" : "off"]);
+  }
+  if ((d = g(0x118))) facts.push(["Gear", DB[0x118].decode(d)[0][1]]);
+  if ((d = g(0x257))) facts.push(["Speed", DB[0x257].decode(d)[0][1]]);
+  if ((d = g(0x39B) || g(0x399))) facts.push(["AP state", dasStatus(pad8(d))[0][1]]);
+  if ((d = g(0x370))) facts.push(["Hands-on level", DB[0x370].decode(pad8(d))[0][1]]);
+  if ((d = g(0x132))) facts.push(["Pack", DB[0x132].decode(pad8(d)).map(r => r[1]).join(" · ")]);
+  [[0x396, "Front oil pump"], [0x395, "Rear oil pump"]].forEach(([id, k]) => {
+    if ((d = g(id))) { const r = oilPump(pad8(d), id === 0x396);
+      facts.push([k + " (unverified)", r[0][1] + " · " + r[4][1] + " · est. " + r[13][1]]); } });
+  if ((d = g(0x318)) && (d[6] & 3)) facts.push(["OTA", "update in progress"]);
+
+  const known = [...ids.keys()].filter(k => DB[k]).length;
+  let h = '<div class="card"><h2>Summary</h2><div class="summary">' +
+    tile("Frames", total) + tile("Unique IDs", ids.size) + tile("Known IDs", known + " / " + ids.size) +
+    tile("Unreadable lines", bad, bad ? "warn" : "") +
+    facts.map(([k, v]) => tile(k, v)).join("") + "</div>";
+  if (ids.has(0x229)) h += '<div class="msg bad">Log contains 0x229 (right stalk). Do not replay those lines.</div>';
+  const csBad = [...ids.values()].filter(e => e.csBad);
+  csBad.forEach(e => h += '<div class="msg bad">0x' + hex(e.id, 3) + " " + DB[e.id].name + ": " + e.csBad + " of " + e.count + " frames have a wrong checksum.</div>");
+  if (badLines.length) h += '<div class="msg warn">Couldn\'t read ' + bad + " lines, e.g.<br><span class=mono>" + badLines.join("<br>") + "</span></div>";
+  h += "</div>";
+
+  h += '<div class="card"><h2>IDs in this log</h2><p class="hint" style="margin-top:0">Tap a row to open it in the frame checker.</p><table><tr><th>ID</th><th>Name</th><th>Count</th><th>Changes</th><th>Last data</th></tr>';
+  [...ids.values()].sort((a, b) => a.id - b.id).forEach(e => {
+    const info = DB[e.id];
+    h += '<tr class="click" data-frame="' + hex(e.id, 3) + "#" + e.last.bytes.map(b => hex(b)).join("") + '"><td class="mono">0x' + hex(e.id, 3) + "</td><td>" +
+      (info ? info.name + (info.danger ? ' <span class="bad">⚠</span>' : "") : '<span class="dim">unknown</span>') + "</td><td>" + e.count + "</td><td>" + e.changes +
+      '</td><td class="mono">' + e.last.bytes.map(b => hex(b)).join(" ") + "</td></tr>";
+  });
+  $("#logOut").innerHTML = h + "</table></div>";
+}
+const pad8 = b => b.slice(0, 8).concat(Array(Math.max(0, 8 - b.length)).fill(0));
+const tile = (k, v, cls = "") => '<div class="card"><span class="dim">' + k + '</span><b class="' + cls + '">' + v + "</b></div>";
+const escapeHtml = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ─── .cantest check ────────────────────────────────────────────────────────
+function runTest() {
+  const lines = $("#testIn").value.split(/\r?\n/);
+  let name = null, ok = 0; const out = [];
+  lines.forEach((l, i) => {
+    const n = i + 1, t = l.trim();
+    if (!t) return;
+    const nm = t.match(/^#\s*Name:\s*(.+)$/i);
+    if (nm) { name = nm[1].trim(); return; }
+    if (t.startsWith("#")) return;
+    const f = parseLine(t);
+    if (!f) return;
+    if (f.error) return out.push(["bad", n, f.error, l]);
+    const opts = f.rest.replace(/#.*$/, "").trim().split(/\s+/).filter(Boolean);
+    const probs = [];
+    if (f.id > 0x7FF) probs.push("ID above 0x7FF — not sendable");
+    if (f.bytes.length > 8) probs.push("more than 8 data bytes");
+    if (f.id === 0x229) probs.push("0x229 right stalk — the loader skips this line for safety");
+    opts.forEach(o => {
+      const m = o.match(/^(repeat|delay)=(\d+)(ms)?$/i);
+      if (!m) probs.push("unknown option '" + o + "'");
+      else if (m[1].toLowerCase() === "repeat" && +m[2] < 1) probs.push("repeat must be at least 1");
+    });
+    const info = DB[f.id];
+    if (info && info.csIdx !== undefined) {
+      const c = checksum(f.id, f.bytes, info.csIdx);
+      if (c && !c.ok) probs.push("checksum byte " + info.csIdx + " is 0x" + hex(c.have) + ", expected 0x" + hex(c.want) + " — the car will ignore it");
+    }
+    if (probs.length) out.push([f.id === 0x229 || f.bytes.length > 8 || f.id > 0x7FF ? "bad" : "warn", n, probs.join("; "), l]);
+    else ok++;
+  });
+  let h = '<div class="card"><h2>' + (name ? escapeHtml(name) : "Unnamed profile") + "</h2>";
+  h += '<div class="msg ' + (out.some(o => o[0] === "bad") ? "bad" : out.length ? "warn" : "ok") + '">' + ok + " line(s) OK, " + out.length + " with problems.</div>";
+  out.forEach(([k, n, msg, l]) => h += '<div class="msg ' + k + '"><b>Line ' + n + ":</b> " + msg + '<br><span class="mono dim">' + escapeHtml(l.trim()) + "</span></div>");
+  $("#testOut").innerHTML = h + "</div>";
+}
+
+// ─── id table ──────────────────────────────────────────────────────────────
+function renderIds() {
+  const q = $("#idFilter").value.trim().toLowerCase().replace(/^0x/, "");
+  let h = "<table><tr><th>ID</th><th>Name</th><th>Bus</th><th>Project use</th><th>Decodes</th></tr>";
+  Object.keys(DB).map(Number).sort((a, b) => a - b).forEach(id => {
+    const e = DB[id], hx = hex(id, 3);
+    if (q && !(hx.toLowerCase().includes(q) || e.name.toLowerCase().includes(q) || e.role.toLowerCase().includes(q))) return;
+    h += '<tr><td class="mono">0x' + hx + "</td><td>" + e.name + "</td><td>" + e.bus + '</td><td class="' + (e.danger ? "bad" : "") + '">' + e.role +
+      "</td><td>" + (e.decode ? "yes" : '<span class="dim">name only</span>') + (e.csIdx !== undefined ? " · checksum" : "") + "</td></tr>";
+  });
+  $("#idTable").innerHTML = h + "</table>";
+}
+
+// ─── wiring ────────────────────────────────────────────────────────────────
+const $ = s => document.querySelector(s);
+function showTab(t) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
+  document.querySelectorAll("main > section").forEach(s => s.classList.toggle("hidden", s.id !== "tab-" + t));
+  try { localStorage.setItem("cc.tab", t); } catch (e) {}
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+document.querySelectorAll("[data-ex]").forEach(b => b.onclick = () => { $("#frameIn").value = b.dataset.ex; runFrame(); });
+$("#frameGo").onclick = runFrame;
+$("#frameIn").addEventListener("keydown", e => { if (e.key === "Enter") runFrame(); });
+$("#frameIn").addEventListener("input", runFrame);
+$("#logGo").onclick = runLog;
+$("#logClear").onclick = () => { $("#logIn").value = ""; $("#logOut").innerHTML = ""; };
+$("#logFile").onchange = e => { const f = e.target.files[0]; if (!f) return;
+  f.text().then(t => { $("#logIn").value = t; runLog(); }); };
+$("#logOut").addEventListener("click", e => { const tr = e.target.closest("tr[data-frame]");
+  if (tr) { $("#frameIn").value = tr.dataset.frame; showTab("frame"); runFrame(); scrollTo(0, 0); } });
+$("#testGo").onclick = runTest;
+$("#idFilter").addEventListener("input", renderIds);
+renderIds();
+try { const t = localStorage.getItem("cc.tab"); if (t) showTab(t); } catch (e) {}
+</script>
+</body>
+</html>
