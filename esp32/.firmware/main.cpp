@@ -175,6 +175,20 @@ static void print_can_stats() {
                   loop_stage_name(r.max_stage), (unsigned long)r.slow);
 }
 
+static void print_tlssc_stats() {
+    Serial.printf("[TLSSC] cache=%d bus=%d saved=%d quiet=%d armed=%lu burst=%u "
+                  "ok=%lu fail=%lu stockRx=%lu\n",
+                  g_tlssc_nr.cache_valid ? 1 : 0,
+                  (int)g_tlssc_nr.cache.bus,
+                  g_tlssc_nr.save_attempted ? 1 : 0,
+                  g_tlssc_nr.bus_quiet ? 1 : 0,
+                  (unsigned long)g_tlssc_nr.armed_ms,
+                  (unsigned)g_tlssc_nr.burst,
+                  (unsigned long)g_tlssc_nr.replay_ok,
+                  (unsigned long)g_tlssc_nr.replay_fail,
+                  (unsigned long)g_tlssc_nr.stock_rx_ms);
+}
+
 static NOINLINE void serial_command_tick() {
     static char buf[24];
     static uint8_t len = 0;
@@ -190,16 +204,18 @@ static NOINLINE void serial_command_tick() {
                 wifi_print_status();
             } else if (serial_cmd_equals(buf, "canstat")) {
                 print_can_stats();
+            } else if (serial_cmd_equals(buf, "tlsscstat")) {
+                print_tlssc_stats();
             } else if (serial_cmd_equals(buf, "debug")) {
                 g_serial_debug = !g_serial_debug;
                 web_dashboard_set_debug(g_serial_debug);
                 Serial.printf("[SER] Debug logs %s until reboot\n", g_serial_debug ? "ON" : "OFF");
             } else if (serial_cmd_equals(buf, "help") || serial_cmd_equals(buf, "?")) {
                 Serial.println("[SER] Commands: ip | canstat (per-bus CAN counters and state, "
-                               "loop timing) | debug ([DAS]/[NAG]/[BMS] frame logs on/off, "
-                               "until reboot)");
+                               "loop timing) | tlsscstat (cache/replay state) | debug "
+                               "([DAS]/[NAG]/[BMS] frame logs on/off, until reboot)");
             } else {
-                Serial.println("[SER] Unknown command. Type: ip, canstat, debug");
+                Serial.println("[SER] Unknown command. Type: ip, canstat, tlsscstat, debug");
             }
             continue;
         }
@@ -279,13 +295,15 @@ static void tlssc_nr_init_from_prefs() {
     }
 }
 
-static NOINLINE void tlssc_nr_tick(uint32_t now) {
+static NOINLINE void tlssc_nr_tick(uint32_t now, uint32_t last_rx_ms) {
+    bool woke = tlssc_nr_wake_edge(&g_tlssc_nr, last_rx_ms, now);
     state_enter();
     bool enabled = g_state.tlssc_restore;
     bool tx_allowed = fsd_can_transmit(&g_state);
     state_exit();
-    if (enabled && !g_tlssc_nr_was_enabled) {
+    if (enabled && (woke || !g_tlssc_nr_was_enabled)) {
         tlssc_nr_rearm(&g_tlssc_nr, now);
+        if (woke) Serial.println("TLSSC no-restart: vehicle wake -> replay window rearmed");
     }
     g_tlssc_nr_was_enabled = enabled;
     if (!enabled || !tx_allowed) return;
@@ -1825,15 +1843,18 @@ static NOINLINE void process_frame(CanBusId bus, const CanFrame &frame) {
         state_exit();
         if (modified && tx && fresh) send_on_bus(bus, f);
 
-        if (enabled && frame.dlc == TLSSC_NR_FRAME_LEN &&
+        if (enabled && frame.dlc == TLSSC_NR_FRAME_LEN) {
+            uint32_t now = millis();
             tlssc_nr_observe(&g_tlssc_nr, frame.data, frame.dlc,
-                             bus_index(bus), millis()) &&
-            !g_tlssc_nr.save_attempted) {
-            g_tlssc_nr.save_attempted = true;
-            bool saved = prefs_save_tlssc_cache(g_tlssc_nr.cache.bus,
-                                                g_tlssc_nr.cache.data,
-                                                g_tlssc_nr.cache.len);
-            Serial.printf("TLSSC no-restart: cache %s\n", saved ? "saved" : "save failed");
+                             bus_index(bus), now);
+            if (tlssc_nr_should_save(&g_tlssc_nr, now)) {
+                tlssc_nr_note_save_attempt(&g_tlssc_nr, now);
+                bool saved = prefs_save_tlssc_cache(g_tlssc_nr.cache.bus,
+                                                    g_tlssc_nr.cache.data,
+                                                    g_tlssc_nr.cache.len);
+                if (saved) tlssc_nr_mark_saved(&g_tlssc_nr);
+                Serial.printf("TLSSC no-restart: cache %s\n", saved ? "saved" : "save failed; retry pending");
+            }
         }
         return;
     }
@@ -2118,6 +2139,7 @@ void setup() {
             Serial.println("[CAN] 500 kbps — Listen-Only");
         }
     }
+    tlssc_nr_tick(millis(), g_power_last_rx_ms);
     Serial.println("[BTN] Single click : toggle Listen-Only / Active");
     Serial.println("[BTN] Long press 3s: toggle NAG Killer");
     Serial.println("[BTN] Double click : toggle BMS serial output");
@@ -2238,7 +2260,7 @@ void loop() {
     }
 
     continuous_ap_tick(now);
-    tlssc_nr_tick(now);
+    tlssc_nr_tick(now, g_power_last_rx_ms);
 
     // ── Precondition frame injection ──────────────────────────────────────────
     static uint32_t last_precond_ms = 0;

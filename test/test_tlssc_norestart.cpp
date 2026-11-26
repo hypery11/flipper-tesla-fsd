@@ -66,7 +66,8 @@ static void test_due_gates_and_pacing() {
     assert(!tlssc_nr_due(&runtime, 1, true, true, 1099));
     assert(tlssc_nr_due(&runtime, 1, true, true, 1100));
     tlssc_nr_record_result(&runtime, false, 1100);
-    assert(runtime.burst == 2 && runtime.replay_ok == 1 && runtime.replay_fail == 1);
+    assert(runtime.burst == 1 && runtime.replay_ok == 1 && runtime.replay_fail == 1);
+    assert(tlssc_nr_due(&runtime, 1, true, true, 1200));
 }
 
 static void test_stock_frame_yield() {
@@ -115,6 +116,43 @@ static void test_rearm_and_wrap() {
     assert(tlssc_nr_due(&runtime, 0, true, true, 0xFFFFFF64u));
 }
 
+static void test_save_retry_and_bus_change() {
+    TlsscNrRuntime runtime = {};
+    uint8_t frame[TLSSC_NR_FRAME_LEN] = {0x05, 1, 2, 3, 4, 5, 6, 7};
+    assert(tlssc_nr_observe(&runtime, frame, sizeof(frame), 0, 100));
+    assert(runtime.cache_valid && !runtime.save_attempted);
+    assert(tlssc_nr_should_save(&runtime, 100));
+    tlssc_nr_note_save_attempt(&runtime, 100);
+    assert(!tlssc_nr_should_save(&runtime, 5099));
+    assert(tlssc_nr_should_save(&runtime, 5100));
+    tlssc_nr_mark_saved(&runtime);
+    assert(runtime.save_attempted && !tlssc_nr_should_save(&runtime, 6000));
+
+    tlssc_nr_load(&runtime, valid_cache(1));
+    assert(runtime.save_attempted);
+    assert(tlssc_nr_observe(&runtime, frame, sizeof(frame), 0, 7000));
+    assert(!runtime.save_attempted && runtime.cache.bus == 0);
+    assert(tlssc_nr_should_save(&runtime, 7000));
+}
+
+static void test_vehicle_wake_edge() {
+    TlsscNrRuntime runtime = {};
+    assert(!tlssc_nr_wake_edge(&runtime, 0, 100));
+    assert(runtime.bus_quiet);
+    assert(tlssc_nr_wake_edge(&runtime, 100, 200));
+    assert(!runtime.bus_quiet);
+    assert(!tlssc_nr_wake_edge(&runtime, 200, 300));
+    assert(!tlssc_nr_wake_edge(&runtime, 200, 30200));
+    assert(runtime.bus_quiet);
+    assert(tlssc_nr_wake_edge(&runtime, 30200, 30201));
+
+    runtime = TlsscNrRuntime{};
+    assert(!tlssc_nr_wake_edge(&runtime, 0xFFFFFF00u, 0xFFFFFF10u));
+    assert(!tlssc_nr_wake_edge(&runtime, 0xFFFFFF00u, 0x00007530u));
+    assert(runtime.bus_quiet);
+    assert(tlssc_nr_wake_edge(&runtime, 0x00007530u, 0x00007531u));
+}
+
 int main() {
     test_cache_validation_and_load();
     test_observe_and_patch();
@@ -122,5 +160,7 @@ int main() {
     test_stock_frame_yield();
     test_window_and_frame_cap();
     test_rearm_and_wrap();
-    puts("TLSSC no-restart tests passed: cache, patch, gates, pacing, yield, window, cap, wrap");
+    test_save_retry_and_bus_change();
+    test_vehicle_wake_edge();
+    puts("TLSSC no-restart tests passed: cache, patch, gates, pacing, yield, window, cap, wrap, save retry, wake");
 }
