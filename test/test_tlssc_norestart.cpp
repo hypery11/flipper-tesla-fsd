@@ -20,7 +20,10 @@ static void test_cache_validation_and_load() {
     cache.data[0] &= 0xC0u;
     assert(!tlssc_nr_cache_valid(cache));
     cache = valid_cache();
-    cache.len = 7;
+    cache.len = 0;
+    assert(!tlssc_nr_cache_valid(cache));
+    cache = valid_cache();
+    cache.len = TLSSC_NR_FRAME_LEN + 1u;
     assert(!tlssc_nr_cache_valid(cache));
     cache = valid_cache();
     cache.bus = 2;
@@ -35,6 +38,14 @@ static void test_cache_validation_and_load() {
     assert(runtime.cache_valid && runtime.save_attempted);
     assert(runtime.cache.bus == 1);
     assert(memcmp(runtime.cache.data, cache.data, TLSSC_NR_FRAME_LEN) == 0);
+
+    cache.len = 6;
+    tlssc_nr_load(&runtime, cache);
+    assert(runtime.cache_valid && runtime.cache.len == 6);
+    uint8_t payload[TLSSC_NR_FRAME_LEN] = {};
+    memset(payload, 0xFF, sizeof(payload));
+    tlssc_nr_copy_payload(&runtime, payload);
+    assert(memcmp(payload, cache.data, 6) == 0 && payload[6] == 0xFF);
 }
 
 static void test_observe_and_patch() {
@@ -48,7 +59,11 @@ static void test_observe_and_patch() {
     assert(!tlssc_nr_observe(&runtime, frame, sizeof(frame), 1, 6000));
     frame[7] = 8;
     assert(tlssc_nr_observe(&runtime, frame, sizeof(frame), 1, 7000));
-    assert(!tlssc_nr_observe(&runtime, frame, 7, 1, 8000));
+    assert(tlssc_nr_observe(&runtime, frame, 7, 1, 8000));
+    assert(runtime.cache.len == 7 && runtime.cache.data[6] == 6);
+    assert(!tlssc_nr_observe(&runtime, frame, 0, 1, 8500));
+    uint8_t too_long[TLSSC_NR_FRAME_LEN + 1u] = {};
+    assert(!tlssc_nr_observe(&runtime, too_long, sizeof(too_long), 1, 8750));
     assert(!tlssc_nr_observe(&runtime, frame, sizeof(frame), 2, 9000));
 }
 
@@ -61,12 +76,16 @@ static void test_due_gates_and_pacing() {
     assert(runtime.armed_ms == 0);
     assert(tlssc_nr_due(&runtime, 1, true, true, 1000));
     assert(runtime.armed_ms == 1000);
-    tlssc_nr_record_result(&runtime, true, 1000);
+    tlssc_nr_record_result(&runtime, true, false, 1000);
     assert(runtime.burst == 1 && runtime.replay_ok == 1 && runtime.replay_fail == 0);
     assert(!tlssc_nr_due(&runtime, 1, true, true, 1099));
     assert(tlssc_nr_due(&runtime, 1, true, true, 1100));
-    tlssc_nr_record_result(&runtime, false, 1100);
-    assert(runtime.burst == 1 && runtime.replay_ok == 1 && runtime.replay_fail == 1);
+    tlssc_nr_record_result(&runtime, false, false, 1100);
+    assert(runtime.burst == 2 && runtime.replay_ok == 1 && runtime.replay_fail == 1);
+    assert(tlssc_nr_due(&runtime, 1, true, true, 1200));
+    tlssc_nr_record_result(&runtime, false, true, 1200);
+    assert(runtime.burst == 2 && runtime.replay_fail == 1 && runtime.replay_busy == 1);
+    assert(runtime.last_replay_ms == 1100);
     assert(tlssc_nr_due(&runtime, 1, true, true, 1200));
 }
 
@@ -93,9 +112,20 @@ static void test_window_and_frame_cap() {
     for (uint16_t i = 0; i < TLSSC_NR_MAX_FRAMES; i++) {
         uint32_t now = 100u + (uint32_t)i * TLSSC_NR_PERIOD_MS;
         assert(tlssc_nr_due(&runtime, 0, true, true, now));
-        tlssc_nr_record_result(&runtime, true, now);
+        tlssc_nr_record_result(&runtime, true, false, now);
     }
     assert(runtime.burst == TLSSC_NR_MAX_FRAMES);
+    assert(!tlssc_nr_due(&runtime, 0, true, true, 60000));
+
+    runtime = TlsscNrRuntime{};
+    tlssc_nr_load(&runtime, valid_cache());
+    for (uint16_t i = 0; i < TLSSC_NR_MAX_FRAMES; i++) {
+        uint32_t now = 100u + (uint32_t)i * TLSSC_NR_PERIOD_MS;
+        assert(tlssc_nr_due(&runtime, 0, true, true, now));
+        tlssc_nr_record_result(&runtime, false, false, now);
+    }
+    assert(runtime.burst == TLSSC_NR_MAX_FRAMES);
+    assert(runtime.replay_fail == TLSSC_NR_MAX_FRAMES);
     assert(!tlssc_nr_due(&runtime, 0, true, true, 60000));
 }
 
@@ -103,7 +133,7 @@ static void test_rearm_and_wrap() {
     TlsscNrRuntime runtime = {};
     tlssc_nr_load(&runtime, valid_cache());
     assert(tlssc_nr_due(&runtime, 0, true, true, 1000));
-    tlssc_nr_record_result(&runtime, true, 1000);
+    tlssc_nr_record_result(&runtime, true, false, 1000);
     tlssc_nr_rearm(&runtime, 2000);
     assert(runtime.armed_ms == 0 && runtime.last_replay_ms == 0 && runtime.burst == 0);
     assert(tlssc_nr_due(&runtime, 0, true, true, 2000));
@@ -111,7 +141,7 @@ static void test_rearm_and_wrap() {
     runtime = TlsscNrRuntime{};
     tlssc_nr_load(&runtime, valid_cache());
     assert(tlssc_nr_due(&runtime, 0, true, true, 0xFFFFFF00u));
-    tlssc_nr_record_result(&runtime, true, 0xFFFFFF00u);
+    tlssc_nr_record_result(&runtime, true, false, 0xFFFFFF00u);
     assert(!tlssc_nr_due(&runtime, 0, true, true, 0xFFFFFF32u));
     assert(tlssc_nr_due(&runtime, 0, true, true, 0xFFFFFF64u));
 }
@@ -131,8 +161,16 @@ static void test_save_retry_and_bus_change() {
     tlssc_nr_load(&runtime, valid_cache(1));
     assert(runtime.save_attempted);
     assert(tlssc_nr_observe(&runtime, frame, sizeof(frame), 0, 7000));
-    assert(!runtime.save_attempted && runtime.cache.bus == 0);
-    assert(tlssc_nr_should_save(&runtime, 7000));
+    assert(runtime.save_attempted && runtime.cache.bus == 0);
+    assert(!tlssc_nr_should_save(&runtime, 7000));
+
+    runtime = TlsscNrRuntime{};
+    assert(tlssc_nr_observe(&runtime, frame, sizeof(frame), 0, 100));
+    tlssc_nr_note_save_attempt(&runtime, 100);
+    frame[1]++;
+    assert(tlssc_nr_observe(&runtime, frame, sizeof(frame), 0, 200));
+    assert(!tlssc_nr_should_save(&runtime, 200));
+    assert(tlssc_nr_should_save(&runtime, 5100));
 }
 
 static void test_vehicle_wake_edge() {
@@ -162,5 +200,5 @@ int main() {
     test_rearm_and_wrap();
     test_save_retry_and_bus_change();
     test_vehicle_wake_edge();
-    puts("TLSSC no-restart tests passed: cache, patch, gates, pacing, yield, window, cap, wrap, save retry, wake");
+    puts("TLSSC no-restart tests passed: variable DLC, patch, gates, pacing, busy yield, attempt cap, save-once, wrap, wake");
 }

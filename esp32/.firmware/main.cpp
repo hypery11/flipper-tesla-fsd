@@ -176,9 +176,10 @@ static void print_can_stats() {
 }
 
 static void print_tlssc_stats() {
-    Serial.printf("[TLSSC] cache=%d bus=%d saved=%d quiet=%d armed=%lu burst=%u "
-                  "ok=%lu fail=%lu stockRx=%lu\n",
+    Serial.printf("[TLSSC] cache=%d len=%u bus=%d saved=%d quiet=%d armed=%lu burst=%u "
+                  "ok=%lu fail=%lu busy=%lu stockMs=%lu\n",
                   g_tlssc_nr.cache_valid ? 1 : 0,
+                  (unsigned)g_tlssc_nr.cache.len,
                   (int)g_tlssc_nr.cache.bus,
                   g_tlssc_nr.save_attempted ? 1 : 0,
                   g_tlssc_nr.bus_quiet ? 1 : 0,
@@ -186,6 +187,7 @@ static void print_tlssc_stats() {
                   (unsigned)g_tlssc_nr.burst,
                   (unsigned long)g_tlssc_nr.replay_ok,
                   (unsigned long)g_tlssc_nr.replay_fail,
+                  (unsigned long)g_tlssc_nr.replay_busy,
                   (unsigned long)g_tlssc_nr.stock_rx_ms);
 }
 
@@ -287,8 +289,9 @@ static bool send_modified_frame(CanBusId bus, const CanFrame &frame) {
 
 static void tlssc_nr_init_from_prefs() {
     TlsscNrCache cache = {};
-    if (!prefs_load_tlssc_cache(&cache.bus, cache.data, sizeof(cache.data))) return;
-    cache.len = TLSSC_NR_FRAME_LEN;
+    size_t cache_len = 0;
+    if (!prefs_load_tlssc_cache(&cache.bus, cache.data, sizeof(cache.data), &cache_len)) return;
+    cache.len = (uint8_t)cache_len;
     tlssc_nr_load(&g_tlssc_nr, cache);
     if (g_tlssc_nr.cache_valid) {
         Serial.printf("TLSSC no-restart: cached 0x331 from CAN%d\n", cache.bus + 1);
@@ -319,10 +322,12 @@ static NOINLINE void tlssc_nr_tick(uint32_t now, uint32_t last_rx_ms) {
 
     CanFrame frame = {};
     frame.id = CAN_ID_DAS_AP_CONFIG;
-    frame.dlc = TLSSC_NR_FRAME_LEN;
+    frame.dlc = g_tlssc_nr.cache.len;
     tlssc_nr_copy_payload(&g_tlssc_nr, frame.data);
+    CanDriver *driver = can_for_bus(bus_id_from_index(bus));
     bool sent = send_on_bus(bus_id_from_index(bus), frame);
-    tlssc_nr_record_result(&g_tlssc_nr, sent, now);
+    bool busy = driver && driver->lastSendBusy();
+    tlssc_nr_record_result(&g_tlssc_nr, sent, busy, now);
     if (sent && g_tlssc_nr.replay_ok == 1u) {
         Serial.println("TLSSC no-restart: replaying cached 0x331 for 60s");
     }
@@ -1843,7 +1848,7 @@ static NOINLINE void process_frame(CanBusId bus, const CanFrame &frame) {
         state_exit();
         if (modified && tx && fresh) send_on_bus(bus, f);
 
-        if (enabled && frame.dlc == TLSSC_NR_FRAME_LEN) {
+        if (enabled && frame.dlc >= 1u && frame.dlc <= TLSSC_NR_FRAME_LEN) {
             uint32_t now = millis();
             tlssc_nr_observe(&g_tlssc_nr, frame.data, frame.dlc,
                              bus_index(bus), now);

@@ -30,10 +30,11 @@ struct TlsscNrRuntime {
     uint16_t burst;
     uint32_t replay_ok;
     uint32_t replay_fail;
+    uint32_t replay_busy;
 };
 
 static inline bool tlssc_nr_cache_valid(const TlsscNrCache &cache) {
-    return cache.bus < 2u && cache.len == TLSSC_NR_FRAME_LEN &&
+    return cache.bus < 2u && cache.len >= 1u && cache.len <= TLSSC_NR_FRAME_LEN &&
            (cache.data[0] & 0x3Fu) == 0x1Bu;
 }
 
@@ -72,24 +73,22 @@ static inline bool tlssc_nr_wake_edge(TlsscNrRuntime *runtime,
 
 static inline bool tlssc_nr_observe(TlsscNrRuntime *runtime, const uint8_t *data,
                                    uint8_t len, uint8_t bus, uint32_t now_ms) {
-    if (!data || len != TLSSC_NR_FRAME_LEN || bus >= 2u) return false;
+    if (!data || len < 1u || len > TLSSC_NR_FRAME_LEN || bus >= 2u) return false;
     runtime->stock_rx_ms = now_ms;
 
-    uint8_t patched[TLSSC_NR_FRAME_LEN];
-    memcpy(patched, data, sizeof(patched));
+    uint8_t patched[TLSSC_NR_FRAME_LEN] = {};
+    memcpy(patched, data, len);
     patched[0] = (uint8_t)((patched[0] & 0xC0u) | 0x1Bu);
 
     bool changed = !runtime->cache_valid || runtime->cache.bus != bus ||
                    runtime->cache.len != len ||
-                   memcmp(runtime->cache.data, patched, sizeof(patched)) != 0;
+                   memcmp(runtime->cache.data, patched, len) != 0;
     if (!changed) return false;
 
     runtime->cache.bus = bus;
     runtime->cache.len = len;
-    memcpy(runtime->cache.data, patched, sizeof(patched));
+    memcpy(runtime->cache.data, patched, len);
     runtime->cache_valid = true;
-    runtime->save_attempted = false;
-    runtime->save_attempt_ms = 0;
     return true;
 }
 
@@ -117,17 +116,18 @@ static inline bool tlssc_nr_due(TlsscNrRuntime *runtime, uint8_t bus,
 }
 
 static inline void tlssc_nr_record_result(TlsscNrRuntime *runtime, bool sent,
-                                         uint32_t now_ms) {
-    runtime->last_replay_ms = now_ms ? now_ms : 1u;
-    if (sent) {
-        runtime->burst++;
-        runtime->replay_ok++;
-    } else {
-        runtime->replay_fail++;
+                                         bool busy, uint32_t now_ms) {
+    if (busy) {
+        runtime->replay_busy++;
+        return;
     }
+    runtime->last_replay_ms = now_ms ? now_ms : 1u;
+    runtime->burst++;
+    if (sent) runtime->replay_ok++;
+    else runtime->replay_fail++;
 }
 
 static inline void tlssc_nr_copy_payload(const TlsscNrRuntime *runtime,
                                          uint8_t *out) {
-    memcpy(out, runtime->cache.data, TLSSC_NR_FRAME_LEN);
+    memcpy(out, runtime->cache.data, runtime->cache.len);
 }

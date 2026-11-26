@@ -1,5 +1,6 @@
 #include "prefs.h"
 #include "blackbox.h"   // BLACKBOX_DEFAULT_ENABLED
+#include "tlssc_norestart.h"
 #include <Preferences.h>
 #include <nvs.h>
 
@@ -13,21 +14,25 @@ bool prefs_namespace_exists(const char *ns) {
     return true;
 }
 
-bool prefs_load_tlssc_cache(uint8_t *bus, uint8_t *data, size_t len) {
-    if (!bus || !data || !prefs_namespace_exists(NS)) return false;
+bool prefs_load_tlssc_cache(uint8_t *bus, uint8_t *data, size_t capacity,
+                            size_t *loaded_len) {
+    if (!bus || !data || !loaded_len || capacity < 1u ||
+        capacity > TLSSC_NR_FRAME_LEN || !prefs_namespace_exists(NS)) return false;
     Preferences prefs;
     if (!prefs.begin(NS, /*readOnly=*/true)) return false;
     uint8_t saved_bus = prefs.getUChar("tlsscBus", 0xFF);
     size_t saved_len = prefs.getBytesLength("tlsscFrame");
-    size_t copied = saved_len == len ? prefs.getBytes("tlsscFrame", data, len) : 0;
+    size_t copied = saved_len >= 1u && saved_len <= capacity
+        ? prefs.getBytes("tlsscFrame", data, saved_len) : 0;
     prefs.end();
-    if (saved_bus >= 2u || copied != len) return false;
+    if (saved_bus >= 2u || saved_len < 1u || saved_len > capacity || copied != saved_len) return false;
     *bus = saved_bus;
+    *loaded_len = saved_len;
     return true;
 }
 
 bool prefs_save_tlssc_cache(uint8_t bus, const uint8_t *data, size_t len) {
-    if (bus >= 2u || !data || !len) return false;
+    if (bus >= 2u || !data || len < 1u || len > TLSSC_NR_FRAME_LEN) return false;
     Preferences prefs;
     if (!prefs.begin(NS, /*readOnly=*/false)) return false;
     size_t copied = prefs.putBytes("tlsscFrame", data, len);

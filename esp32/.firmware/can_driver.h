@@ -40,6 +40,9 @@ public:
     /** Send one CAN frame.  Returns false when TX is not allowed (listen-only, bus-off, etc.). */
     virtual bool send(const CanFrame &frame) = 0;
 
+    /** Whether the most recent send() was refused because the TX queue/buffers were busy. */
+    virtual bool lastSendBusy() const { return false; }
+
     /** Non-blocking receive.  Fills frame and returns true if a frame was available. */
     virtual bool receive(CanFrame &frame) = 0;
 

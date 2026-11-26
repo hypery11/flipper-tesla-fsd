@@ -50,6 +50,7 @@ class TwaiDriver : public CanDriver {
     bool     installed_   = false;
     uint32_t tx_count_    = 0;
     uint32_t rx_count_    = 0;
+    bool     last_send_busy_ = false;
     uint8_t  filter_count_ = 0;
     uint32_t filter_ids_[CAN_CAPTURE_MAX_IDS] = {};
     // RX ID whitelist (performance) prefilter — separate from the capture filter
@@ -162,6 +163,7 @@ public:
     }
 
     bool send(const CanFrame &frame) override {
+        last_send_busy_ = false;
         if (listen_only_) return false;
         if (!tesla_can_tx_valid(frame.id, frame.dlc)) return false;
         twai_message_t msg;
@@ -170,10 +172,16 @@ public:
         msg.data_length_code = frame.dlc;
         memcpy(msg.data, frame.data, frame.dlc);
         // 5 ms TX timeout — short enough to not stall the main loop
-        if (twai_transmit(&msg, pdMS_TO_TICKS(5)) != ESP_OK) return false;
+        const esp_err_t err = twai_transmit(&msg, pdMS_TO_TICKS(5));
+        if (err != ESP_OK) {
+            last_send_busy_ = err == ESP_ERR_TIMEOUT;
+            return false;
+        }
         tx_count_++;
         return true;
     }
+
+    bool lastSendBusy() const override { return last_send_busy_; }
 
     bool receive(CanFrame &frame) override {
         for (uint8_t i = 0; i < CAN_RX_REJECT_BURST_MAX; i++) {
@@ -464,6 +472,7 @@ class Mcp2515Driver : public CanDriver {
     uint32_t err_count_    = 0;
     uint32_t tx_count_     = 0;
     uint32_t rx_count_     = 0;
+    bool     last_send_busy_ = false;
     volatile uint32_t rx_rejected_ = 0;   // DLC>8 frames dropped (readMessage FAIL)
 
     // The library is not thread-safe and the receive task reads the chip
@@ -733,6 +742,7 @@ public:
     bool hardwarePresent() override { return chip_detected_; }
 
     bool send(const CanFrame &frame) override {
+        last_send_busy_ = false;
         if (!installed_ || listen_only_) return false;
         if (!tesla_can_tx_valid(frame.id, frame.dlc)) return false;
         struct can_frame f;
@@ -745,12 +755,15 @@ public:
             err = mcp_.sendMessage(&f);
         }
         if (err != MCP2515::ERROR_OK) {
+            last_send_busy_ = err == MCP2515::ERROR_ALLTXBUSY;
             err_count_++;
             return false;
         }
         tx_count_++;
         return true;
     }
+
+    bool lastSendBusy() const override { return last_send_busy_; }
 
     // With the receive task, frames come off its queue; frames it left there
     // when it stopped are read before the chip is polled again.
@@ -1006,6 +1019,7 @@ class Mcp2518FdDriver : public CanDriver {
     uint32_t rxw_ids_[MCP2518FD_RXW_MAX_IDS] = {};
     uint32_t tx_count_      = 0;
     uint32_t rx_count_      = 0;
+    bool     last_send_busy_ = false;
     uint32_t rx_rejected_   = 0;   // DLC>8 and CAN FD frames dropped
     uint32_t rx_missed_     = 0;   // RX FIFO overflow events
     uint32_t tx_failed_     = 0;   // tryToSend() refused: TX FIFO full
@@ -1297,18 +1311,22 @@ public:
     bool hardwarePresent() override { return chip_detected_; }
 
     bool send(const CanFrame &frame) override {
+        last_send_busy_ = false;
         if (!installed_ || listen_only_) return false;
         CANFDMessage msg;
         if (!mcp2518fd_tx_message(frame, msg)) return false;
         // There is no software queue: a full controller FIFO fails the send,
         // as an MCP2515 with all TX buffers busy does.
         if (!can_.tryToSend(msg)) {
+            last_send_busy_ = true;
             tx_failed_++;
             return false;
         }
         tx_count_++;
         return true;
     }
+
+    bool lastSendBusy() const override { return last_send_busy_; }
 
     bool receive(CanFrame &frame) override {
         if (!installed_) return false;
