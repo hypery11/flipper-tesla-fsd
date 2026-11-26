@@ -1,3 +1,11 @@
+## 2.17-beta.8 — ESP32 TLSSC no-reboot replay
+
+ESP32-only and still opt-in through the existing TLSSC Restore switch; the Flipper app is unchanged. This is a port of the bounded cache/replay approach from [baicyber/P4can-No-Reboot](https://github.com/baicyber/P4can-No-Reboot), not yet verified in a vehicle.
+
+- **The patched `0x331` is saved before the next power cycle.** A valid 8-byte frame is cached with its source bus after byte[0] is changed to SELF_DRIVING. Only one NVS save is attempted per boot, and factory reset clears it with the other settings.
+- **ESP32 replays the cached frame instead of waiting for stock traffic.** With TLSSC Restore enabled and TX allowed, the cached frame goes out on the same bus at 10 Hz for up to 60 seconds after boot or re-enable, capped at 600 frames. It stops at the window/cap, yields for 2 seconds after every stock `0x331`, and never transmits in Listen-Only, Autopark or OTA-blocked states.
+- **Reactive retransmission stays.** Fresh stock `0x331` frames are still modified and re-sent immediately. Serial output reports cache load/save and replay start; host tests cover validation, gates, pacing, yield, bounds and `millis()` wrap.
+
 ## 2.17-beta.7 — black box turns on where the heap is fragmented, and two honest docs corrections
 
 ESP32-only; the Flipper app is unchanged. The web flasher still installs the stable 2.16.0 by default; this is the opt-in beta on the same page (or `…/install/#beta`).
