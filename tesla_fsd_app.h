@@ -13,6 +13,7 @@
 #include "libraries/mcp_can_2515.h"
 #include "fsd_logic/fsd_handler.h"
 #include "fsd_logic/fsd_profile.h"
+#include "fsd_logic/fsd_live.h"
 
 #define FSD_SEND_MAX_STEPS 48
 
@@ -115,6 +116,10 @@ typedef struct {
     bool extra_highbeam_strobe;   // rapid high beam flash (Party CAN 0x249)
     bool extra_turn_left;         // inject left turn signal
     bool extra_turn_right;        // inject right turn signal
+
+    // Live Data scene (read-only dashboard, fsd_logic/fsd_live.h)
+    FsdLive live;
+    uint8_t live_page;
 } TeslaFSDApp;
 
 TeslaFSDApp* tesla_fsd_app_alloc(void);

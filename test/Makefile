@@ -62,7 +62,11 @@ test_page_send: test_page_send.cpp $(ESP32)/page_send.h
 test_rx_whitelist: test_rx_whitelist.c $(ROOT)/fsd_logic/fsd_rx_whitelist.h $(ROOT)/fsd_logic/fsd_state.h $(ROOT)/fsd_logic/fsd_blackbox_filter.h $(ROOT)/fsd_logic/fsd_types.h $(ROOT)/fsd_logic/fsd_perf.h $(ROOT)/fsd_logic/fsd_tpms.h
 	$(CC) $(CFLAGS) -I$(ROOT)/fsd_logic test_rx_whitelist.c -o $@ -lm
 
-check: test_fsd_core test_esp32_core test_can_capture_filter test_captive_probe test_can_mcp2518fd test_web_cmd test_web_origin test_can_counters test_loop_health test_power_log test_page_send test_rx_whitelist
+# test_fsd_live covers fsd_logic/fsd_live.h (Flipper Live Data screen decoders).
+test_fsd_live: test_fsd_live.c $(ROOT)/fsd_logic/fsd_live.h
+	$(CC) $(CFLAGS) -I$(ROOT)/fsd_logic test_fsd_live.c -o $@
+
+check: test_fsd_core test_esp32_core test_can_capture_filter test_captive_probe test_can_mcp2518fd test_web_cmd test_web_origin test_can_counters test_loop_health test_power_log test_page_send test_rx_whitelist test_fsd_live
 	./test_fsd_core
 	./test_esp32_core
 	./test_can_capture_filter
@@ -75,9 +79,10 @@ check: test_fsd_core test_esp32_core test_can_capture_filter test_captive_probe 
 	./test_power_log
 	./test_page_send
 	./test_rx_whitelist
+	./test_fsd_live
 	CXX="$(CXX)" python3 test_web_page.py
 
 clean:
-	rm -rf test_fsd_core test_fsd_core.dSYM test_esp32_core test_esp32_core.dSYM test_can_capture_filter test_can_capture_filter.dSYM test_captive_probe test_captive_probe.dSYM test_can_mcp2518fd test_can_mcp2518fd.dSYM test_web_cmd test_web_cmd.dSYM test_web_origin test_web_origin.dSYM test_can_counters test_can_counters.dSYM test_loop_health test_loop_health.dSYM test_power_log test_power_log.dSYM test_page_send test_page_send.dSYM test_rx_whitelist test_rx_whitelist.dSYM
+	rm -rf test_fsd_core test_fsd_core.dSYM test_esp32_core test_esp32_core.dSYM test_can_capture_filter test_can_capture_filter.dSYM test_captive_probe test_captive_probe.dSYM test_can_mcp2518fd test_can_mcp2518fd.dSYM test_web_cmd test_web_cmd.dSYM test_web_origin test_web_origin.dSYM test_can_counters test_can_counters.dSYM test_loop_health test_loop_health.dSYM test_power_log test_power_log.dSYM test_page_send test_page_send.dSYM test_rx_whitelist test_rx_whitelist.dSYM test_fsd_live test_fsd_live.dSYM
 
 .PHONY: check clean
